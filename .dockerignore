@@ -1,0 +1,5 @@
+.git
+.github
+test-client/node_modules
+*.md
+.env
