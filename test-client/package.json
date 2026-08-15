@@ -1,0 +1,12 @@
+{
+  "name": "backup-cache-interop",
+  "private": true,
+  "type": "module",
+  "description": "Interop proof: a real @bsv/sdk AuthFetch client against the Go server.",
+  "scripts": {
+    "test": "node interop.mjs"
+  },
+  "dependencies": {
+    "@bsv/sdk": "2.4.0"
+  }
+}
