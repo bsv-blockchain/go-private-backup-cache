@@ -11,13 +11,23 @@ import (
 	"strconv"
 )
 
-// DefaultMaxBlobBytes caps a single stored blob at 1 MiB.
+// DefaultMaxBlobBytes caps a single stored blob at 100 MiB, matching the network's maximum
+// transaction size policy.
 //
-// This is not a defensive nicety. The BRC-103/104 auth middleware wraps every handler in a
+// It was 1 MiB, which made backup impossible for any wallet holding a large transaction.
+// The R1-K1 YubiKey vault locking script is ~960 KB by design, so a single vault deposit is
+// ~960 KB of rawTx and ~1.28 MB once the client base64-encodes it — over the old cap in one
+// indivisible record. No client-side chunking can split a single record, so such a wallet
+// could never push a backup again.
+//
+// SIZING THIS IS NOT FREE. The BRC-103/104 auth middleware wraps every handler in a
 // ResponseWriterWrapper that buffers the whole request and response in order to sign them,
 // and it implements neither http.Flusher nor http.Hijacker — so streaming is impossible
-// behind auth and every byte is held in memory. The cap is what keeps that safe.
-const DefaultMaxBlobBytes int64 = 1 << 20
+// behind auth and every byte is held in memory, several times over between the read
+// buffer, the signature payload and the store write. Budget on the order of 3x this value
+// per concurrent upload when setting a container memory limit, and lower MAX_BLOB_BYTES
+// rather than hoping, if the deployment cannot afford it.
+const DefaultMaxBlobBytes int64 = 100 << 20
 
 // Config is the fully resolved service configuration.
 type Config struct {

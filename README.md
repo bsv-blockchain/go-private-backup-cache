@@ -76,13 +76,15 @@ quotas, which leak nothing.
 
 ## API
 
-Everything except `/health` and `/.well-known/auth` requires BRC-103/104 authentication.
+Everything except `/health`, `/v1/limits` and `/.well-known/auth` requires BRC-103/104
+authentication.
 `{deviceId}` is a client-generated opaque `[a-f0-9]{32}`. Sequences are 1-based and
 contiguous within a `(pseudonym, deviceId, generation)`.
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/health` | Unauthenticated |
+| `GET` | `/v1/limits` | Unauthenticated; `maxBlobBytes` and `maxBodyBytes` |
 | `GET` | `/v1/manifest` | Devices and generations for the caller |
 | `POST` | `/v1/log/{deviceId}?seq=&generation=&prevSha256=` | Raw `application/octet-stream` body |
 | `GET` | `/v1/log/{deviceId}?generation=&from=&limit=` | Entry metadata |
@@ -129,9 +131,22 @@ TEST_DATABASE_URL=postgres://... go test ./... -race   # includes the Postgres s
 - **Single instance.** Sessions are in-process. Running replicas requires sticky sessions or
   a shared `auth.SessionManager` (five methods); none ships with the library. The failure mode
   is a handshake on one replica and a request on another.
-- **Blobs are capped at 1 MiB.** Streaming is impossible behind the auth middleware — its
+- **Blobs are capped at 100 MiB** (`MAX_BLOB_BYTES`), matching the network's maximum
+  transaction size policy, and the cap is published unauthenticated at `GET /v1/limits` so a
+  client can read it instead of carrying its own copy. It was 1 MiB, which made backup
+  impossible for a wallet holding a large transaction: the R1-K1 YubiKey vault locking script
+  is ~960 KB by design, so one vault deposit is ~1.28 MB base64-encoded, in a single record
+  no client-side chunking can split.
+
+  **Sizing this costs memory.** Streaming is impossible behind the auth middleware — its
   response wrapper buffers in order to sign, and implements neither `http.Flusher` nor
-  `http.Hijacker` — so every request is fully held in memory and the cap is what keeps that
-  safe.
+  `http.Hijacker` — so every request is fully held in memory, several times over between the
+  read buffer, the signature payload and the store write. Budget roughly 3x `MAX_BLOB_BYTES`
+  per concurrent upload when setting a container memory limit, and lower the cap rather than
+  hope, if a deployment cannot afford it.
+- **Oversize uploads answer 413 before authentication.** The size guard sits ahead of the
+  auth middleware and overrides it. Without that, an oversize body failed the middleware's
+  read while it built the signature payload and surfaced as `invalid authentication` —
+  sending callers to debug BRC-31 headers over what was only ever a size problem.
 - **The server wallet holds no funds.** `CompletedProtoWallet` is key-only: it cannot spend,
   so it cannot be drained.
