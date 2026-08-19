@@ -94,6 +94,32 @@ check('JSON upload refused (415)', asJson.status === 415, `status ${asJson.statu
 const del = await alice.f.fetch(`${BASE}/v1/generation/${device}/1`, { method: 'DELETE' })
 check('deleting the only generation is refused (409)', del.status === 409, `status ${del.status}`)
 
+// 11. Erasure on request. Runs last, deliberately: it removes everything the steps above
+// wrote, so nothing after it could rely on that data.
+const bobErase = await bob.f.fetch(`${BASE}/v1/account`, { method: 'DELETE' })
+const bobBody = await bobErase.json().catch(() => ({}))
+check('bob erasing his own account cannot touch alice (deleted 0)',
+  bobErase.status === 200 && bobBody.deleted === 0,
+  `status ${bobErase.status} deleted ${String(bobBody.deleted)}`)
+
+const stillThere = await alice.f.fetch(`${BASE}/v1/log/${device}/1?generation=1`, { method: 'GET' })
+check("alice's blob survived bob's erasure", stillThere.status === 200, `status ${stillThere.status}`)
+
+const erase = await alice.f.fetch(`${BASE}/v1/account`, { method: 'DELETE' })
+const erased = await erase.json().catch(() => ({}))
+check('erasure removes the retained generation prune refused',
+  erase.status === 200 && erased.deleted >= 1,
+  `status ${erase.status} deleted ${String(erased.deleted)}`)
+
+const gone = await alice.f.fetch(`${BASE}/v1/log/${device}/1?generation=1`, { method: 'GET' })
+check('erased blob is gone (404)', gone.status === 404, `status ${gone.status}`)
+
+const again = await alice.f.fetch(`${BASE}/v1/account`, { method: 'DELETE' })
+const againBody = await again.json().catch(() => ({}))
+check('erasure is idempotent (200, deleted 0)',
+  again.status === 200 && againBody.deleted === 0,
+  `status ${again.status} deleted ${String(againBody.deleted)}`)
+
 const failed = results.filter(r => !r.ok)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
 process.exit(failed.length === 0 ? 0 : 1)

@@ -49,6 +49,7 @@ func routerFor(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 	r.Get("/v1/log/{deviceId}", handlers.Index(store))
 	r.Get("/v1/log/{deviceId}/{seq}", handlers.Blob(store))
 	r.Delete("/v1/generation/{deviceId}/{generation}", handlers.PruneGeneration(store))
+	r.Delete("/v1/account", handlers.DeleteAccount(store))
 	return r
 }
 
@@ -154,4 +155,98 @@ func TestManifestEncodesEmptyArrayNotNull(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"devices":[]`)
 	require.NotContains(t, rec.Body.String(), "null")
+}
+
+// del issues a DELETE against the router under test.
+func del(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodDelete, target, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestDeleteAccountRequiresAuthentication(t *testing.T) {
+	// Erasure is the one irreversible operation here. An unauthenticated caller must not be
+	// able to reach the store at all.
+	store := blobstore.NewMemoryStore()
+	_, err := store.Append(context.Background(), blobstore.BlobKey{
+		Pseudonym: keyFor(t, 1).ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
+	}, "", []byte("x"))
+	require.NoError(t, err)
+
+	rec := del(t, routerFor(store, nil), "/v1/account")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), "ERR_AUTH_REQUIRED")
+
+	_, err = store.Get(context.Background(), blobstore.BlobKey{
+		Pseudonym: keyFor(t, 1).ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
+	})
+	require.NoError(t, err, "an unauthenticated request must not have erased anything")
+}
+
+func TestDeleteAccountErasesOnlyTheCallersData(t *testing.T) {
+	ctx := context.Background()
+	store := blobstore.NewMemoryStore()
+	mine, theirs := keyFor(t, 1), keyFor(t, 2)
+
+	for _, k := range []*ec.PublicKey{mine, theirs} {
+		_, err := store.Append(ctx, blobstore.BlobKey{
+			Pseudonym: k.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
+		}, "", []byte("x"))
+		require.NoError(t, err)
+	}
+
+	rec := del(t, routerFor(store, mine), "/v1/account")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"deleted":1`)
+
+	_, err := store.Get(ctx, blobstore.BlobKey{
+		Pseudonym: mine.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
+	})
+	require.ErrorIs(t, err, blobstore.ErrNotFound)
+
+	// The account address comes from the authenticated identity and nowhere else, so one
+	// caller can never name another's pseudonym.
+	_, err = store.Get(ctx, blobstore.BlobKey{
+		Pseudonym: theirs.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
+	})
+	require.NoError(t, err)
+}
+
+func TestDeleteAccountRemovesTheRetainedWindowToo(t *testing.T) {
+	ctx := context.Background()
+	store := blobstore.NewMemoryStore()
+	mine := keyFor(t, 3)
+	for gen := 1; gen <= 3; gen++ {
+		_, err := store.Append(ctx, blobstore.BlobKey{
+			Pseudonym: mine.ToDERHex(), DeviceID: testDevice, Generation: gen, Seq: 1,
+		}, "", []byte("x"))
+		require.NoError(t, err)
+	}
+
+	// What PruneGeneration refuses (409 ERR_RETENTION_GUARD on the two newest) is exactly
+	// what an erasure request has to remove, which is why this endpoint exists at all.
+	require.Equal(t, http.StatusConflict,
+		del(t, routerFor(store, mine), "/v1/generation/"+testDevice+"/3").Code)
+
+	rec := del(t, routerFor(store, mine), "/v1/account")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"deleted":3`)
+
+	devices, err := store.Manifest(ctx, mine.ToDERHex())
+	require.NoError(t, err)
+	require.Empty(t, devices)
+}
+
+func TestDeleteAccountIsIdempotentOverHTTP(t *testing.T) {
+	// A client that never saw the first response must be able to retry without getting an
+	// error it would have to interpret.
+	store := blobstore.NewMemoryStore()
+	h := routerFor(store, keyFor(t, 4))
+
+	require.Equal(t, http.StatusOK, del(t, h, "/v1/account").Code)
+	rec := del(t, h, "/v1/account")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"deleted":0`)
 }
