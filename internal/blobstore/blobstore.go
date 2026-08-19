@@ -87,6 +87,16 @@ type BlobStore interface {
 	// window. Returns the number of rows removed.
 	DeleteGeneration(ctx context.Context, pseudonym, deviceID string, generation int) (int64, error)
 
+	// DeleteAccount removes every blob belonging to one pseudonym, across all devices and
+	// all generations. Returns the number of rows removed.
+	//
+	// The retention guard does NOT apply: this serves an erasure request from the only
+	// party who can make one (the holder of the key the pseudonym derives from), and
+	// leaving the two newest generations behind would defeat the entire point. Idempotent
+	// — erasing an account that holds nothing removes nothing and is not an error, because
+	// a client cannot tell a lost response from a refused request.
+	DeleteAccount(ctx context.Context, pseudonym string) (int64, error)
+
 	// Ping reports backing-store reachability for the health endpoint.
 	Ping() error
 }

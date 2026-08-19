@@ -46,6 +46,7 @@ func routerAs(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 	r.Get("/v1/log/{deviceId}", handlers.Index(store))
 	r.Get("/v1/log/{deviceId}/{seq}", handlers.Blob(store))
 	r.Delete("/v1/generation/{deviceId}/{generation}", handlers.PruneGeneration(store))
+	r.Delete("/v1/account", handlers.DeleteAccount(store))
 	return r
 }
 
@@ -156,6 +157,25 @@ func TestPruneCannotDeleteAnotherIdentitysData(t *testing.T) {
 		Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
 	})
 	require.NoError(t, err, "another identity deleted this identity's generation")
+}
+
+func TestEraseCannotTouchAnotherIdentitysData(t *testing.T) {
+	// The erasure route ignores the retention guard by design, which makes cross-identity
+	// isolation the only thing standing between one user and another user's entire backup.
+	store := blobstore.NewMemoryStore()
+	alice := identityFor(t, 1)
+	bob := identityFor(t, 2)
+	seedAlice(t, store, alice)
+
+	rec := httptest.NewRecorder()
+	routerAs(store, bob).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/account", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"deleted":0`, "bob's erasure found bob's data, which is none")
+
+	_, err := store.Get(context.Background(), blobstore.BlobKey{
+		Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
+	})
+	require.NoError(t, err, "another identity erased this identity's account")
 }
 
 func TestManifestOnlyEverListsTheCallersOwnDevices(t *testing.T) {

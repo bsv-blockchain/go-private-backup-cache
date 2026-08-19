@@ -211,6 +211,18 @@ func (s *PostgresStore) DeleteGeneration(ctx context.Context, pseudonym, deviceI
 	return res.RowsAffected()
 }
 
+// DeleteAccount implements BlobStore.
+//
+// One statement, no generation bookkeeping and no retention check: an erasure request is
+// all-or-nothing, and a partial erasure that reported success would be worse than an error.
+func (s *PostgresStore) DeleteAccount(ctx context.Context, pseudonym string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM blob_log WHERE pseudonym=$1`, pseudonym)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func nullable(s string) any {
 	if s == "" {
 		return nil

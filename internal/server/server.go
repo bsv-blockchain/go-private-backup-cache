@@ -75,6 +75,9 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/v1/log/{deviceId}", handlers.Index(d.Store))
 		r.Get("/v1/log/{deviceId}/{seq}", handlers.Blob(d.Store))
 		r.Delete("/v1/generation/{deviceId}/{generation}", handlers.PruneGeneration(d.Store))
+		// Erasure on request. Separate from pruning because it must ignore the retention
+		// guard that pruning exists to enforce — see handlers.DeleteAccount.
+		r.Delete("/v1/account", handlers.DeleteAccount(d.Store))
 	})
 
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {

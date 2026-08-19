@@ -25,6 +25,11 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/backup_cache_test?sslmode=disable
         run: go test ./... -race -cover
-      - uses: golangci/golangci-lint-action@v6
+      # v8 installs golangci-lint v2. v6 pins the v1 line, whose newest build
+      # (1.64.8) is compiled with go1.24 and refuses to load a config for a module
+      # targeting a newer Go: "the Go language version (go1.24) used to build
+      # golangci-lint is lower than the targeted Go version (1.26.0)". That has
+      # failed this job on every push since go.mod moved to 1.26.
+      - uses: golangci/golangci-lint-action@v8
         with:
           version: latest

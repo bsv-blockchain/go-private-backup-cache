@@ -177,6 +177,22 @@ func (m *MemoryStore) DeleteGeneration(_ context.Context, pseudonym, deviceID st
 	return n, nil
 }
 
+// DeleteAccount implements BlobStore.
+func (m *MemoryStore) DeleteAccount(_ context.Context, pseudonym string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// No retention guard, deliberately — see the interface doc.
+	var n int64
+	for id, r := range m.rows {
+		if r.key.Pseudonym == pseudonym {
+			delete(m.rows, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
 // Ping implements BlobStore.
 func (m *MemoryStore) Ping() error { return nil }
 
