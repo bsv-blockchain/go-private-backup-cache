@@ -183,7 +183,7 @@ func (g *sizeGuard) WriteHeader(code int) {
 	g.wrote = true
 	if g.over {
 		// Drop any x-bsv-auth-* headers the middleware staged for its own error.
-		clear(g.ResponseWriter.Header())
+		clear(g.Header())
 		writeTooLarge(g.ResponseWriter, g.blobLimit)
 		return
 	}
