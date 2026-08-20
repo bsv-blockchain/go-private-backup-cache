@@ -158,6 +158,81 @@ func TestDeleteGenerationIsScopedToPseudonym(t *testing.T) {
 	})
 }
 
+func TestDeleteAccountErasesEverythingIncludingTheRetainedWindow(t *testing.T) {
+	eachStore(t, "erase", func(t *testing.T, s blobstore.BlobStore) {
+		ctx := context.Background()
+		p := alice + t.Name()
+
+		// Two devices, three generations each: the newest two per device are exactly what
+		// DeleteGeneration refuses, and are exactly what an erasure request must remove.
+		for _, dev := range []string{"d1", "d2"} {
+			for gen := 1; gen <= 3; gen++ {
+				_, err := s.Append(ctx, blobstore.BlobKey{
+					Pseudonym: p, DeviceID: dev, Generation: gen, Seq: 1,
+				}, "", []byte("x"))
+				require.NoError(t, err)
+			}
+		}
+
+		n, err := s.DeleteAccount(ctx, p)
+		require.NoError(t, err)
+		require.Equal(t, int64(6), n)
+
+		devices, err := s.Manifest(ctx, p)
+		require.NoError(t, err)
+		require.Empty(t, devices, "erasure must leave nothing behind for this pseudonym")
+
+		_, err = s.Get(ctx, blobstore.BlobKey{Pseudonym: p, DeviceID: "d1", Generation: 3, Seq: 1})
+		require.ErrorIs(t, err, blobstore.ErrNotFound)
+	})
+}
+
+func TestDeleteAccountIsScopedToPseudonym(t *testing.T) {
+	eachStore(t, "erase-scoping", func(t *testing.T, s blobstore.BlobStore) {
+		ctx := context.Background()
+		mine := alice + t.Name()
+		theirs := bob + t.Name()
+
+		for _, p := range []string{mine, theirs} {
+			_, err := s.Append(ctx, blobstore.BlobKey{
+				Pseudonym: p, DeviceID: device, Generation: 1, Seq: 1,
+			}, "", []byte("x"))
+			require.NoError(t, err)
+		}
+
+		n, err := s.DeleteAccount(ctx, mine)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), n)
+
+		// The neighbouring account is untouched. Erasure is the most destructive operation
+		// in the service, so its scoping matters more than any other method's.
+		_, err = s.Get(ctx, blobstore.BlobKey{
+			Pseudonym: theirs, DeviceID: device, Generation: 1, Seq: 1,
+		})
+		require.NoError(t, err)
+	})
+}
+
+func TestDeleteAccountIsIdempotent(t *testing.T) {
+	eachStore(t, "erase-idempotent", func(t *testing.T, s blobstore.BlobStore) {
+		ctx := context.Background()
+		p := alice + t.Name()
+		_, err := s.Append(ctx, blobstore.BlobKey{
+			Pseudonym: p, DeviceID: device, Generation: 1, Seq: 1,
+		}, "", []byte("x"))
+		require.NoError(t, err)
+
+		_, err = s.DeleteAccount(ctx, p)
+		require.NoError(t, err)
+
+		// A retried erasure request must succeed with nothing to do rather than error: the
+		// caller cannot tell whether the first attempt's response was lost in transit.
+		n, err := s.DeleteAccount(ctx, p)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), n)
+	})
+}
+
 func TestIndexAndManifestReportTheLog(t *testing.T) {
 	eachStore(t, "index-manifest", func(t *testing.T, s blobstore.BlobStore) {
 		ctx := context.Background()

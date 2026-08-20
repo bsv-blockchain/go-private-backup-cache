@@ -90,6 +90,7 @@ contiguous within a `(pseudonym, deviceId, generation)`.
 | `GET` | `/v1/log/{deviceId}?generation=&from=&limit=` | Entry metadata |
 | `GET` | `/v1/log/{deviceId}/{seq}?generation=` | Raw ciphertext |
 | `DELETE` | `/v1/generation/{deviceId}/{generation}` | Prune an old generation |
+| `DELETE` | `/v1/account` | Erase every generation for the caller (GDPR Art. 17) |
 
 Uploads are raw binary, not base64. This requires **`@bsv/sdk` 2.4.0** on the client: 2.1.9's
 `AuthFetch` tested `typeof body === 'object'` ahead of its binary branches, so a `Uint8Array`
