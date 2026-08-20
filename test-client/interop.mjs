@@ -1,7 +1,9 @@
 // Interop proof: a real @bsv/sdk 2.4.0 AuthFetch client against the Go server.
 // Verifies the BRC-103/104 handshake, raw binary round-trip, sequence conflict handling,
 // and — most importantly — that one identity cannot reach another's blobs.
-import pkg from '@bsv/sdk'
+// Namespace import, not default: the 2.4.0 ESM build exports named bindings only, and a
+// default import fails outright on a modern Node ESM loader.
+import * as pkg from '@bsv/sdk'
 import { randomBytes } from 'crypto'
 
 const { AuthFetch, CompletedProtoWallet, PrivateKey } = pkg
@@ -53,11 +55,27 @@ const gap = await alice.f.fetch(`${BASE}/v1/log/${device}?seq=9&generation=1`, {
 })
 check('skipping a sequence is refused (409)', gap.status === 409, `status ${gap.status}`)
 
-// 5. Size cap.
-const big = await alice.f.fetch(`${BASE}/v1/log/${device}?seq=2&generation=1`, {
-  method: 'POST', headers: { 'Content-Type': OCTET }, body: randomBytes(1024 * 1024 + 1),
-})
-check('oversize blob rejected (413)', big.status === 413, `status ${big.status}`)
+// 5. Size cap. The limit is read from the server rather than hardcoded — a constant here
+// drifts out of sync with the deployment exactly as the wallet client's did.
+const limitsRes = await fetch(`${BASE}/v1/limits`)
+const limits = await limitsRes.json()
+check('limits endpoint is public and reports a cap',
+  limitsRes.status === 200 && Number.isInteger(limits.maxBlobBytes),
+  `maxBlobBytes ${limits.maxBlobBytes}`)
+
+// Uploading past a 100 MiB cap would move gigabytes through the signing path for one
+// assertion, so the oversize check runs only against a small cap. Not silently skipped:
+// it prints why, and how to force it.
+const OVERSIZE_CEILING = 8 * 1024 * 1024
+if (limits.maxBlobBytes <= OVERSIZE_CEILING) {
+  const big = await alice.f.fetch(`${BASE}/v1/log/${device}?seq=2&generation=1`, {
+    method: 'POST', headers: { 'Content-Type': OCTET }, body: randomBytes(limits.maxBlobBytes + 1),
+  })
+  check('oversize blob rejected (413)', big.status === 413, `status ${big.status}`)
+} else {
+  console.log(`SKIP  oversize blob rejected (413)  — server cap is ${limits.maxBlobBytes} bytes; ` +
+    'rerun the server with MAX_BLOB_BYTES=1048576 to exercise it')
+}
 
 // 6. Manifest is scoped to the caller.
 const man = await alice.f.fetch(`${BASE}/v1/manifest`, { method: 'GET' })

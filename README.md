@@ -76,13 +76,15 @@ quotas, which leak nothing.
 
 ## API
 
-Everything except `/health` and `/.well-known/auth` requires BRC-103/104 authentication.
+Everything except `/health`, `/v1/limits` and `/.well-known/auth` requires BRC-103/104
+authentication.
 `{deviceId}` is a client-generated opaque `[a-f0-9]{32}`. Sequences are 1-based and
 contiguous within a `(pseudonym, deviceId, generation)`.
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/health` | Unauthenticated |
+| `GET` | `/v1/limits` | Unauthenticated; `maxBlobBytes` and `maxBodyBytes` |
 | `GET` | `/v1/manifest` | Devices and generations for the caller |
 | `POST` | `/v1/log/{deviceId}?seq=&generation=&prevSha256=` | Raw `application/octet-stream` body |
 | `GET` | `/v1/log/{deviceId}?generation=&from=&limit=` | Entry metadata |
@@ -134,5 +136,15 @@ TEST_DATABASE_URL=postgres://... go test ./... -race   # includes the Postgres s
   response wrapper buffers in order to sign, and implements neither `http.Flusher` nor
   `http.Hijacker` — so every request is fully held in memory and the cap is what keeps that
   safe.
+- **Oversize uploads answer 413 before authentication.** The size guard sits ahead of the
+  auth middleware and overrides it. Without that, an oversize body failed the middleware's read
+  while it built the signature payload, and the caller was told `invalid authentication` —
+  sending them to debug BRC-31 headers over what was only ever a size problem. The 413 cannot
+  itself be signed (refusing to read the body is the point), so `AuthFetch` still wraps it in a
+  missing-headers message: clients should branch on the status or on `ERR_BLOB_TOO_LARGE`, never
+  on the message text.
+- **The cap is published at `GET /v1/limits`**, unauthenticated, so a client can read it instead
+  of carrying its own copy that drifts out of sync with the deployment. The number is not a
+  secret and knowing it grants no capability.
 - **The server wallet holds no funds.** `CompletedProtoWallet` is key-only: it cannot spend,
   so it cannot be drained.
