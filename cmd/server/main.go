@@ -19,8 +19,9 @@ import (
 
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/blobstore"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/config"
-	"github.com/bsv-blockchain/go-private-backup-cache/internal/nonce"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/logger"
+	"github.com/bsv-blockchain/go-private-backup-cache/internal/nonce"
+	otelsetup "github.com/bsv-blockchain/go-private-backup-cache/internal/otel"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/server"
 	walletpkg "github.com/bsv-blockchain/go-private-backup-cache/internal/wallet"
 )
@@ -34,6 +35,15 @@ func main() {
 		os.Exit(1)
 	}
 	log := logger.Configure(cfg.LogLevel, cfg.LogFormat)
+
+	otelShutdown, err := otelsetup.Setup(context.Background(), cfg.OTelEndpoint, "private-backup-cache")
+	if err != nil {
+		log.Error("failed to set up telemetry", "error", err)
+		os.Exit(1)
+	}
+	if cfg.OTelEndpoint != "" {
+		log.Info("telemetry export enabled", "endpoint", cfg.OTelEndpoint)
+	}
 
 	srvWallet, err := walletpkg.NewServerIdentity(cfg.ServerPrivateKey)
 	if err != nil {
@@ -79,6 +89,9 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Error("graceful shutdown failed", "error", err)
 	}
+	if err := otelShutdown(ctx); err != nil {
+		log.Error("telemetry flush failed", "error", err)
+	}
 }
 
 // openStore selects the backing store.
@@ -91,7 +104,7 @@ func main() {
 func openStore(cfg *config.Config, log *slog.Logger) (blobstore.BlobStore, nonce.Store, func(), error) {
 	if cfg.DatabaseURL == "" {
 		log.Warn("DATABASE_URL is not set — using an in-memory store; ALL DATA IS LOST ON RESTART")
-		return blobstore.NewMemoryStore(), nonce.NewMemoryStore(), func() {}, nil
+		return blobstore.WithTracing(blobstore.NewMemoryStore()), nonce.NewMemoryStore(), func() {}, nil
 	}
 
 	pg, err := blobstore.NewPostgresStore(cfg.DatabaseURL)
@@ -102,7 +115,7 @@ func openStore(cfg *config.Config, log *slog.Logger) (blobstore.BlobStore, nonce
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return pg, nonces, func() {
+	return blobstore.WithTracing(pg), nonces, func() {
 		if cerr := pg.Close(); cerr != nil {
 			log.Error("failed to close store", "error", cerr)
 		}

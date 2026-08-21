@@ -47,6 +47,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID, chimw.Recoverer)
+	r.Use(Telemetry(d.Logger))
 	r.Use(corsMiddleware)
 	r.Use(maxBody(d.MaxBlobBytes))
 

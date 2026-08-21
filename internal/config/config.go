@@ -28,6 +28,7 @@ type Config struct {
 	LogLevel         string
 	LogFormat        string
 	MaxBlobBytes     int64
+	OTelEndpoint     string
 }
 
 // Load reads configuration from the environment.
@@ -51,6 +52,9 @@ func Load() (*Config, error) {
 		LogLevel:         getEnvDefault("LOG_LEVEL", "info"),
 		LogFormat:        getEnvDefault("LOG_FORMAT", "json"),
 		MaxBlobBytes:     int64(getEnvInt("MAX_BLOB_BYTES", int(DefaultMaxBlobBytes))),
+		// The standard OTel variable name, so collector-side tooling and docs apply as-is.
+		// Empty means telemetry export is off; the service runs fine without a collector.
+		OTelEndpoint: getEnvDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}, nil
 }
 

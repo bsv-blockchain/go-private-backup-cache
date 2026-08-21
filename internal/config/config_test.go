@@ -37,6 +37,23 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, "json", cfg.LogFormat)
 }
 
+func TestLoadReadsOTelEndpoint(t *testing.T) {
+	t.Setenv("SERVER_PRIVATE_KEY", validKey)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "http://collector:4318", cfg.OTelEndpoint)
+}
+
+func TestLoadOTelEndpointDefaultsToEmpty(t *testing.T) {
+	// No collector configured means telemetry export stays off; the service must still run.
+	t.Setenv("SERVER_PRIVATE_KEY", validKey)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Empty(t, cfg.OTelEndpoint)
+}
+
 func TestDefaultCapFitsTheLargestTransaction(t *testing.T) {
 	// The service exists to store every BSV transaction inline, and a transaction can
 	// legitimately reach 100 MB. The default cap is double that, so no honest encoding

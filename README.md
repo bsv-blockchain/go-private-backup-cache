@@ -159,3 +159,13 @@ TEST_DATABASE_URL=postgres://... go test ./... -race   # includes the Postgres s
   no-backward-compatibility decision. Deploying it erases stored blobs from older versions.
 - **The server wallet holds no funds.** `CompletedProtoWallet` is key-only: it cannot spend,
   so it cannot be drained.
+- **Telemetry is OTLP and off by default.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` to a
+  collector's base URL and the service exports traces (one span per request plus store
+  operations) and metrics (`http.server.request.duration` histogram,
+  `http.server.errors` counter) over OTLP/HTTP. Every request also gets one summary log
+  line — route, status, duration, bytes — at WARN for 5xx, with `trace_id` stamped on
+  every log line written inside a traced request. Span names and metric labels use route
+  patterns (`POST /v1/log/{deviceId}`), never raw paths: raw paths would explode metric
+  cardinality and hand pseudonyms and device IDs to the telemetry backend, which sits
+  outside this service's zero-knowledge boundary. `/health` is untraced so probes do not
+  drown real traffic.
