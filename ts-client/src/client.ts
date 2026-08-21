@@ -71,8 +71,11 @@ export class BackupCacheClient {
 
   constructor (opts: BackupCacheClientOptions) {
     // A trailing slash would put "//" on the wire while the signed action says "/",
-    // failing every proof — strip it rather than document it.
-    this.baseUrl = opts.baseUrl.replace(/\/+$/, '')
+    // failing every proof — strip it rather than document it. A loop, not a regex:
+    // /\/+$/ backtracks polynomially on adversarial input, and baseUrl is caller data.
+    let base = opts.baseUrl
+    while (base.endsWith('/')) base = base.slice(0, -1)
+    this.baseUrl = base
     this.wallet = opts.wallet
     // Wrapped so the global fetch keeps its own receiver; a bare method reference throws
     // "Illegal invocation" in browsers.
