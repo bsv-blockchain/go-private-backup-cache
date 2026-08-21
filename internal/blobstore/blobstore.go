@@ -9,6 +9,7 @@ package blobstore
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -24,6 +25,10 @@ var (
 
 	// ErrRetentionGuard means the caller tried to delete a generation that must be kept.
 	ErrRetentionGuard = errors.New("generation is within the retained window")
+
+	// ErrEmptyBlob means the body carried no bytes. Detected by the store because only
+	// the store sees the stream through to EOF; nothing is kept.
+	ErrEmptyBlob = errors.New("empty blob")
 )
 
 // RetainedGenerations is how many generations survive pruning: the current one and the
@@ -66,16 +71,20 @@ type DeviceSummary struct {
 
 // BlobStore is the persistence seam.
 //
-// Blobs are opaque, append-only and at most a megabyte, so a Postgres bytea column is a
-// comfortable fit; this interface exists so an object store can be substituted later
-// without touching the handlers.
+// Blobs are opaque and append-only, and since the cap moved to hundreds of megabytes both
+// directions STREAM: neither implementation may hold a whole blob in memory. This
+// interface exists so an object store can be substituted later without touching the
+// handlers.
 type BlobStore interface {
-	// Append stores data at k, which must be exactly one past the current head sequence
-	// for that (pseudonym, device, generation). Returns the sha256 hex of the stored bytes.
-	Append(ctx context.Context, k BlobKey, prevSha256 string, data []byte) (string, error)
+	// Append stores body at k, which must be exactly one past the current head sequence
+	// for that (pseudonym, device, generation). The body is consumed to EOF and hashed as
+	// it streams; a read error aborts the append and nothing is kept. Returns the sha256
+	// hex and byte count of the stored blob.
+	Append(ctx context.Context, k BlobKey, prevSha256 string, body io.Reader) (string, int64, error)
 
-	// Get returns the ciphertext at k, or ErrNotFound.
-	Get(ctx context.Context, k BlobKey) ([]byte, error)
+	// Get returns the ciphertext at k as a stream plus its total size, or ErrNotFound.
+	// The caller owns the reader and must close it.
+	Get(ctx context.Context, k BlobKey) (io.ReadCloser, int64, error)
 
 	// Index lists entry metadata for one generation, starting at sequence from.
 	Index(ctx context.Context, pseudonym, deviceID string, generation, from, limit int) ([]Entry, error)

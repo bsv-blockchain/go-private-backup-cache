@@ -11,13 +11,14 @@ import (
 	"strconv"
 )
 
-// DefaultMaxBlobBytes caps a single stored blob at 1 MiB.
+// DefaultMaxBlobBytes caps a single stored blob at 200 MiB.
 //
-// This is not a defensive nicety. The BRC-103/104 auth middleware wraps every handler in a
-// ResponseWriterWrapper that buffers the whole request and response in order to sign them,
-// and it implements neither http.Flusher nor http.Hijacker — so streaming is impossible
-// behind auth and every byte is held in memory. The cap is what keeps that safe.
-const DefaultMaxBlobBytes int64 = 1 << 20
+// The point of this service is that a backup record carries its transactions inline, and
+// a BSV transaction can legitimately reach 100 MB — the cap is double that so no honest
+// encoding overhead ever hits it. It is safe at this size because nothing buffers: auth
+// is a per-request header proof verified before the body is read, and the body streams
+// through a bounded chunk buffer into storage (see internal/authproof and blobstore).
+const DefaultMaxBlobBytes int64 = 200 << 20
 
 // Config is the fully resolved service configuration.
 type Config struct {

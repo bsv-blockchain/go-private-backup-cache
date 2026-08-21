@@ -20,11 +20,12 @@ It cannot read a single byte of what it stores, and this is structural rather th
 - **Blobs are encrypted before they arrive**, with a key derived from the client's wallet
   seed using counterparty `self`. Nobody but that seed holder can derive it. There is no
   decrypt path in this codebase and there must never be one.
-- **The account address is a pseudonym.** Clients authenticate over BRC-103/104 using a key
-  derived from their wallet seed, not their wallet identity key. The server stores blobs
-  under whatever key authenticated, so it never learns the on-chain identity.
+- **The account address is a pseudonym.** Clients authenticate with a per-request signed
+  proof (see [docs/authproof-protocol.md](docs/authproof-protocol.md)) under a key derived
+  from their wallet seed, not their wallet identity key. The server stores blobs under
+  whatever key authenticated, so it never learns the on-chain identity.
 - **There is no identity parameter anywhere in the API.** The account is taken from the
-  authenticated session and nothing else. A client cannot name another account to read or
+  verified proof and nothing else. A client cannot name another account to read or
   write, because there is no field in which to name one.
 
 ### What it does still observe
@@ -53,14 +54,14 @@ payment. That hands over:
 
 - **The BEEF, which is the actual leak.** `x-bsv-beef` carries each input's ancestry back to
   a proof — meaning one or more complete prior transactions of the user's wallet, as bytes,
-  not references. Delivered inside a request BRC-104 has already bound to the pseudonym, it
-  is a signed assertion that this pseudonym controls those outpoints.
+  not references. Delivered inside a request the auth proof has already bound to the
+  pseudonym, it is a signed assertion that this pseudonym controls those outpoints.
 - **A chain the operator can walk.** Payment *n*'s change funds payment *n+1*, so two
   payments are enough to follow the wallet forward with any public indexer. Change amounts
   additionally disclose balance and its trajectory.
 - **A join that needs no chain analysis at all.** Wallets already send their real identity
-  key in cleartext to ordinary BRC-121 merchants, and every BRC-103 peer learns it by
-  construction. One join against any service holding both that key and an outpoint is enough.
+  key in cleartext to ordinary BRC-121 merchants and auth peers by construction. One join
+  against any service holding both that key and an outpoint is enough.
 - **Records this service would otherwise never hold.** Replay protection in go-402-pay is
   delegated to the wallet's `InternalizeAction`, so a paid deployment needs a funded,
   storage-backed wallet and gains a permanent per-payment ledger keyed by pseudonym. Today it
@@ -76,27 +77,32 @@ quotas, which leak nothing.
 
 ## API
 
-Everything except `/health`, `/v1/limits` and `/.well-known/auth` requires BRC-103/104
-authentication.
+Everything except `/health` and `/v1/limits` requires an `X-Bsv-Auth` proof header —
+one signed proof per request, verified before the body is read, no handshake and no
+session. The scheme is `@bsv/auth`-compatible and specified in
+[docs/authproof-protocol.md](docs/authproof-protocol.md).
 `{deviceId}` is a client-generated opaque `[a-f0-9]{32}`. Sequences are 1-based and
 contiguous within a `(pseudonym, deviceId, generation)`.
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/health` | Unauthenticated |
-| `GET` | `/v1/limits` | Unauthenticated; `maxBlobBytes` and `maxBodyBytes` |
+| `GET` | `/v1/limits` | Unauthenticated; `maxBlobBytes`, `maxBodyBytes`, `serverIdentityKey` |
 | `GET` | `/v1/manifest` | Devices and generations for the caller |
-| `POST` | `/v1/log/{deviceId}?seq=&generation=&prevSha256=` | Raw `application/octet-stream` body |
+| `POST` | `/v1/log/{deviceId}?seq=&generation=&prevSha256=` | Raw `application/octet-stream` body, streamed |
 | `GET` | `/v1/log/{deviceId}?generation=&from=&limit=` | Entry metadata |
-| `GET` | `/v1/log/{deviceId}/{seq}?generation=` | Raw ciphertext |
+| `GET` | `/v1/log/{deviceId}/{seq}?generation=` | Raw ciphertext, streamed, `Content-Length` set |
 | `DELETE` | `/v1/generation/{deviceId}/{generation}` | Prune an old generation |
 | `DELETE` | `/v1/account` | Erase every generation for the caller (GDPR Art. 17) |
 
-Uploads are raw binary, not base64. This requires **`@bsv/sdk` 2.4.0** on the client: 2.1.9's
-`AuthFetch` tested `typeof body === 'object'` ahead of its binary branches, so a `Uint8Array`
-body was JSON-stringified into `{"0":12,...}`. Downloads are unaffected on both versions.
+Uploads are raw binary, not base64 — the body on the wire is the blob, byte for byte, and
+its sha256 is bound into the auth proof. Both directions stream: a blob is never resident
+in server memory.
 
 Errors use `{"status":"error","code":"ERR_...","description":"..."}`.
+
+Clients: [`client/`](client/) (Go) and [`ts-client/`](ts-client/) (TypeScript,
+`@bsv/backup-cache-client`) ship in this repo and speak the whole protocol.
 
 ### Retention
 
@@ -126,25 +132,30 @@ TEST_DATABASE_URL=postgres://... go test ./... -race   # includes the Postgres s
 
 ## Operational notes
 
-- **Mount at the origin root.** The auth middleware intercepts `POST /.well-known/auth` on an
-  exact path compare, and TypeScript clients always post the handshake to the origin root.
-  Mounting under a subtree makes every request 401 with `session-not-found`.
-- **Single instance.** Sessions are in-process. Running replicas requires sticky sessions or
-  a shared `auth.SessionManager` (five methods); none ships with the library. The failure mode
-  is a handshake on one replica and a request on another.
-- **Blobs are capped at 1 MiB.** Streaming is impossible behind the auth middleware — its
-  response wrapper buffers in order to sign, and implements neither `http.Flusher` nor
-  `http.Hijacker` — so every request is fully held in memory and the cap is what keeps that
-  safe.
+- **Replicas scale freely.** Authentication is stateless per request; the only shared
+  state is the nonce table in Postgres, where an `INSERT ... ON CONFLICT` makes replay
+  refusal atomic across replicas. There is no handshake, no session and no sticky routing.
+- **Blobs are capped at 200 MiB** (`MAX_BLOB_BYTES`) so a 100 MB transaction fits with
+  room for any honest encoding overhead. The cap is a policy number, not a memory number:
+  the body streams through a 1 MiB chunk buffer into `blob_chunks` rows, and downloads
+  stream back out the same way, so server memory use does not scale with blob size.
+- **Anything between client and server must allow the cap through.** A proxy or CDN with
+  its own body limit answers before this service does — Cloudflare's proxy, for one, caps
+  uploads at 100 MB on non-enterprise plans.
+- **A whole request must finish inside 30 minutes** (`server.StreamTimeout`, read and
+  write). Generous enough for the full cap on a slow honest link; what it bounds is the
+  deliberately-slow stream, because an upload holds a store transaction — and with it a
+  pooled database connection — for as long as its body keeps trickling, and the nonce
+  store every authentication needs shares that pool.
 - **Oversize uploads answer 413 before authentication.** The size guard sits ahead of the
-  auth middleware and overrides it. Without that, an oversize body failed the middleware's read
-  while it built the signature payload, and the caller was told `invalid authentication` —
-  sending them to debug BRC-31 headers over what was only ever a size problem. The 413 cannot
-  itself be signed (refusing to read the body is the point), so `AuthFetch` still wraps it in a
-  missing-headers message: clients should branch on the status or on `ERR_BLOB_TOO_LARGE`, never
-  on the message text.
-- **The cap is published at `GET /v1/limits`**, unauthenticated, so a client can read it instead
-  of carrying its own copy that drifts out of sync with the deployment. The number is not a
-  secret and knowing it grants no capability.
+  auth layer and overrides it, so a size problem is never reported as an auth problem.
+  Clients should branch on the status or on `ERR_BLOB_TOO_LARGE`, never on message text.
+- **The cap and the server's identity key are published at `GET /v1/limits`**,
+  unauthenticated: the cap so a client can read it instead of carrying a copy that drifts
+  out of sync, the key because a client cannot build its first proof without it. Neither
+  is a secret and knowing them grants no capability.
+- **A schema wipe ships with this version.** The first migration drops the pre-streaming
+  `blob_log` table (single `bytea` column) if that is what it finds, per the standing
+  no-backward-compatibility decision. Deploying it erases stored blobs from older versions.
 - **The server wallet holds no funds.** `CompletedProtoWallet` is key-only: it cannot spend,
   so it cannot be drained.

@@ -1,0 +1,40 @@
+{
+  "name": "@bsv/backup-cache-client",
+  "version": "0.1.0",
+  "description": "TypeScript client for the go-private-backup-cache service: stateless per-request auth proofs over streaming encrypted blobs.",
+  "license": "Open BSV License",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bsv-blockchain/go-private-backup-cache.git",
+    "directory": "ts-client"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@bsv/auth": "^0.1.3"
+  },
+  "peerDependencies": {
+    "@bsv/sdk": "^2.4.1"
+  },
+  "devDependencies": {
+    "@bsv/sdk": "^2.4.1",
+    "typescript": "^5.6.0"
+  }
+}

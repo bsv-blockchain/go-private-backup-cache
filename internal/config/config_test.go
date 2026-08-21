@@ -36,3 +36,11 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, config.DefaultMaxBlobBytes, cfg.MaxBlobBytes)
 	require.Equal(t, "json", cfg.LogFormat)
 }
+
+func TestDefaultCapFitsTheLargestTransaction(t *testing.T) {
+	// The service exists to store every BSV transaction inline, and a transaction can
+	// legitimately reach 100 MB. The default cap is double that, so no honest encoding
+	// overhead ever hits it. If this number shrinks, that property is being given away —
+	// do it deliberately or not at all.
+	require.GreaterOrEqual(t, config.DefaultMaxBlobBytes, int64(200<<20))
+}

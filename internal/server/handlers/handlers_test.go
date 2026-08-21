@@ -3,8 +3,13 @@ package handlers_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,10 +22,7 @@ import (
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/server/middlewares"
 )
 
-const (
-	testDevice   = "0123456789abcdef0123456789abcdef"
-	testMaxBytes = 1 << 20
-)
+const testDevice = "0123456789abcdef0123456789abcdef"
 
 // keyFor returns a deterministic public key for a test identity.
 func keyFor(t *testing.T, n byte) *ec.PublicKey {
@@ -33,7 +35,7 @@ func keyFor(t *testing.T, n byte) *ec.PublicKey {
 }
 
 // routerFor builds the authenticated route table with a pre-injected identity, standing in
-// for what the BRC-103/104 middleware would place in the context.
+// for what the auth-proof middleware would place in the context.
 func routerFor(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
@@ -45,7 +47,7 @@ func routerFor(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 		})
 	})
 	r.Get("/v1/manifest", handlers.Manifest(store))
-	r.Post("/v1/log/{deviceId}", handlers.Append(store, testMaxBytes))
+	r.Post("/v1/log/{deviceId}", handlers.Append(store))
 	r.Get("/v1/log/{deviceId}", handlers.Index(store))
 	r.Get("/v1/log/{deviceId}/{seq}", handlers.Blob(store))
 	r.Delete("/v1/generation/{deviceId}/{generation}", handlers.PruneGeneration(store))
@@ -55,11 +57,53 @@ func routerFor(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 
 func post(t *testing.T, h http.Handler, target string, body []byte, contentType string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body))
+	return postBody(t, h, target, bytes.NewReader(body), contentType)
+}
+
+func postBody(t *testing.T, h http.Handler, target string, body io.Reader, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, target, body)
 	req.Header.Set("Content-Type", contentType)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// seed appends payload directly to the store, hiding the streaming call shape from tests
+// that only need data to exist.
+func seed(t *testing.T, store blobstore.BlobStore, k blobstore.BlobKey, payload []byte) {
+	t.Helper()
+	_, _, err := store.Append(context.Background(), k, "", bytes.NewReader(payload))
+	require.NoError(t, err)
+}
+
+// readBack fetches a blob directly from the store, checking the reported size against the
+// stream it accompanies.
+func readBack(t *testing.T, store blobstore.BlobStore, k blobstore.BlobKey) []byte {
+	t.Helper()
+	rc, size, err := store.Get(context.Background(), k)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rc.Close()) }()
+	data, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(data)), size)
+	return data
+}
+
+// errAfterBody yields its bytes and then err in place of io.EOF — the exact shape the auth
+// middleware's digest-verifying wrapper gives the store when the streamed bytes do not
+// hash to the digest the proof signed.
+type errAfterBody struct {
+	r   io.Reader
+	err error
+}
+
+func (b *errAfterBody) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if errors.Is(err, io.EOF) {
+		return n, b.err
+	}
+	return n, err
 }
 
 func TestAppendRequiresAuthentication(t *testing.T) {
@@ -73,14 +117,6 @@ func TestAppendRejectsNonOctetStream(t *testing.T) {
 	h := routerFor(blobstore.NewMemoryStore(), keyFor(t, 1))
 	rec := post(t, h, "/v1/log/"+testDevice+"?seq=1&generation=1", []byte("x"), "application/json")
 	require.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
-}
-
-func TestAppendRejectsOversizeBlob(t *testing.T) {
-	h := routerFor(blobstore.NewMemoryStore(), keyFor(t, 1))
-	rec := post(t, h, "/v1/log/"+testDevice+"?seq=1&generation=1",
-		make([]byte, testMaxBytes+1), handlers.ContentTypeOctetStream)
-	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-	require.Contains(t, rec.Body.String(), "ERR_BLOB_TOO_LARGE")
 }
 
 func TestAppendRejectsMalformedDeviceID(t *testing.T) {
@@ -103,11 +139,27 @@ func TestAppendStoresUnderTheAuthenticatedIdentity(t *testing.T) {
 		[]byte("payload"), handlers.ContentTypeOctetStream)
 	require.Equal(t, http.StatusCreated, rec.Code)
 
-	got, err := store.Get(context.Background(), blobstore.BlobKey{
+	got := readBack(t, store, blobstore.BlobKey{
 		Pseudonym: identity.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
 	})
-	require.NoError(t, err)
 	require.Equal(t, []byte("payload"), got)
+}
+
+func TestAppendReportsTheStoredShaAndSize(t *testing.T) {
+	// The upload response is the client's end-to-end integrity check: it must echo the
+	// sha256 and byte count of what the store actually kept, not what the client sent.
+	h := routerFor(blobstore.NewMemoryStore(), keyFor(t, 2))
+	payload := []byte("payload")
+
+	rec := post(t, h, "/v1/log/"+testDevice+"?seq=1&generation=1", payload, handlers.ContentTypeOctetStream)
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	sum := sha256.Sum256(payload)
+	body := rec.Body.String()
+	require.Contains(t, body, `"status":"success"`)
+	require.Contains(t, body, `"seq":1`)
+	require.Contains(t, body, `"sha256":"`+hex.EncodeToString(sum[:])+`"`)
+	require.Contains(t, body, `"size":`+strconv.Itoa(len(payload)))
 }
 
 func TestAppendRejectsASecondWriteToTheSameSequence(t *testing.T) {
@@ -123,20 +175,41 @@ func TestAppendRejectsASecondWriteToTheSameSequence(t *testing.T) {
 }
 
 func TestAppendRejectsEmptyBody(t *testing.T) {
+	// The handler no longer pre-reads the body, so emptiness is detected by the store at
+	// EOF; the mapping back to 400 ERR_EMPTY_BLOB is what this pins.
 	h := routerFor(blobstore.NewMemoryStore(), keyFor(t, 1))
 	rec := post(t, h, "/v1/log/"+testDevice+"?seq=1&generation=1", nil, handlers.ContentTypeOctetStream)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "ERR_EMPTY_BLOB")
 }
 
+func TestAppendKeepsNothingWhenTheBodyFailsItsDigest(t *testing.T) {
+	// The auth middleware wraps upload bodies so a digest mismatch surfaces to the store
+	// as a read error at EOF. The handler must translate that into the protocol's 400 and
+	// the aborted append must leave no trace — a forged body costs the attacker an upload,
+	// never storage.
+	store := blobstore.NewMemoryStore()
+	identity := keyFor(t, 5)
+	h := routerFor(store, identity)
+
+	body := &errAfterBody{r: strings.NewReader("forged payload"), err: middlewares.ErrBodyDigestMismatch}
+	rec := postBody(t, h, "/v1/log/"+testDevice+"?seq=1&generation=1", body, handlers.ContentTypeOctetStream)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "ERR_BODY_DIGEST_MISMATCH")
+
+	_, _, err := store.Get(context.Background(), blobstore.BlobKey{
+		Pseudonym: identity.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
+	})
+	require.ErrorIs(t, err, blobstore.ErrNotFound)
+}
+
 func TestBlobReturnsRawBytes(t *testing.T) {
 	store := blobstore.NewMemoryStore()
 	identity := keyFor(t, 3)
 	payload := []byte{0x00, 0xff, 0x10, 0x7f, 0x80}
-	_, err := store.Append(context.Background(), blobstore.BlobKey{
+	seed(t, store, blobstore.BlobKey{
 		Pseudonym: identity.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
-	}, "", payload)
-	require.NoError(t, err)
+	}, payload)
 
 	rec := httptest.NewRecorder()
 	routerFor(store, identity).ServeHTTP(rec,
@@ -144,6 +217,8 @@ func TestBlobReturnsRawBytes(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, handlers.ContentTypeOctetStream, rec.Header().Get("Content-Type"))
+	// Announced up front from the metadata row so a restoring client can show progress.
+	require.Equal(t, strconv.Itoa(len(payload)), rec.Header().Get("Content-Length"))
 	require.Equal(t, payload, rec.Body.Bytes())
 }
 
@@ -170,19 +245,18 @@ func TestDeleteAccountRequiresAuthentication(t *testing.T) {
 	// Erasure is the one irreversible operation here. An unauthenticated caller must not be
 	// able to reach the store at all.
 	store := blobstore.NewMemoryStore()
-	_, err := store.Append(context.Background(), blobstore.BlobKey{
+	seed(t, store, blobstore.BlobKey{
 		Pseudonym: keyFor(t, 1).ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
-	}, "", []byte("x"))
-	require.NoError(t, err)
+	}, []byte("x"))
 
 	rec := del(t, routerFor(store, nil), "/v1/account")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 	require.Contains(t, rec.Body.String(), "ERR_AUTH_REQUIRED")
 
-	_, err = store.Get(context.Background(), blobstore.BlobKey{
+	got := readBack(t, store, blobstore.BlobKey{
 		Pseudonym: keyFor(t, 1).ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
 	})
-	require.NoError(t, err, "an unauthenticated request must not have erased anything")
+	require.Equal(t, []byte("x"), got, "an unauthenticated request must not have erased anything")
 }
 
 func TestDeleteAccountErasesOnlyTheCallersData(t *testing.T) {
@@ -191,27 +265,26 @@ func TestDeleteAccountErasesOnlyTheCallersData(t *testing.T) {
 	mine, theirs := keyFor(t, 1), keyFor(t, 2)
 
 	for _, k := range []*ec.PublicKey{mine, theirs} {
-		_, err := store.Append(ctx, blobstore.BlobKey{
+		seed(t, store, blobstore.BlobKey{
 			Pseudonym: k.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
-		}, "", []byte("x"))
-		require.NoError(t, err)
+		}, []byte("x"))
 	}
 
 	rec := del(t, routerFor(store, mine), "/v1/account")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"deleted":1`)
 
-	_, err := store.Get(ctx, blobstore.BlobKey{
+	_, _, err := store.Get(ctx, blobstore.BlobKey{
 		Pseudonym: mine.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
 	})
 	require.ErrorIs(t, err, blobstore.ErrNotFound)
 
 	// The account address comes from the authenticated identity and nowhere else, so one
 	// caller can never name another's pseudonym.
-	_, err = store.Get(ctx, blobstore.BlobKey{
+	got := readBack(t, store, blobstore.BlobKey{
 		Pseudonym: theirs.ToDERHex(), DeviceID: testDevice, Generation: 1, Seq: 1,
 	})
-	require.NoError(t, err)
+	require.Equal(t, []byte("x"), got)
 }
 
 func TestDeleteAccountRemovesTheRetainedWindowToo(t *testing.T) {
@@ -219,10 +292,9 @@ func TestDeleteAccountRemovesTheRetainedWindowToo(t *testing.T) {
 	store := blobstore.NewMemoryStore()
 	mine := keyFor(t, 3)
 	for gen := 1; gen <= 3; gen++ {
-		_, err := store.Append(ctx, blobstore.BlobKey{
+		seed(t, store, blobstore.BlobKey{
 			Pseudonym: mine.ToDERHex(), DeviceID: testDevice, Generation: gen, Seq: 1,
-		}, "", []byte("x"))
-		require.NoError(t, err)
+		}, []byte("x"))
 	}
 
 	// What PruneGeneration refuses (409 ERR_RETENTION_GUARD on the two newest) is exactly

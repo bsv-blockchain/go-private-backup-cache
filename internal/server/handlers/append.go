@@ -2,24 +2,26 @@ package handlers
 
 import (
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/blobstore"
+	"github.com/bsv-blockchain/go-private-backup-cache/internal/server/middlewares"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/server/responses"
 )
 
-// ContentTypeOctetStream is the only accepted upload encoding.
-//
-// Raw binary rather than base64-in-JSON. This requires @bsv/sdk 2.4.0 on the client: 2.1.9's
-// AuthFetch tested `typeof body === 'object'` ahead of its binary branches, so a Uint8Array
-// body was JSON-stringified into {"0":12,...}. There is no base64 fallback by design.
+// ContentTypeOctetStream is the only accepted upload encoding. Raw binary rather than
+// base64-in-JSON — there is no base64 fallback by design.
 const ContentTypeOctetStream = "application/octet-stream"
 
 // Append handles POST /v1/log/{deviceId}?seq=&generation=&prevSha256=
-func Append(store blobstore.BlobStore, maxBytes int64) http.HandlerFunc {
+//
+// The body STREAMS into the store: by the time this handler runs, the auth middleware has
+// verified the sender from the proof header alone and wrapped the body so it fails at EOF
+// if the bytes do not hash to the digest the proof signed. A mismatch or an oversize read
+// error aborts the store's transaction — nothing is kept from a bad upload.
+func Append(store blobstore.BlobStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		account := pseudonym(w, r)
 		if account == "" {
@@ -45,24 +47,6 @@ func Append(store blobstore.BlobStore, maxBytes int64) http.HandlerFunc {
 			return
 		}
 
-		// Bounded read. Streaming is impossible behind the auth middleware, so the body is
-		// fully buffered either way; reading one byte past the cap is how oversize is
-		// detected without trusting a client-declared length.
-		data, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
-		if err != nil {
-			responses.WriteError(w, http.StatusBadRequest, "ERR_BODY_READ", "Could not read the request body.")
-			return
-		}
-		if int64(len(data)) > maxBytes {
-			responses.WriteError(w, http.StatusRequestEntityTooLarge,
-				"ERR_BLOB_TOO_LARGE", "Blob exceeds the maximum permitted size.")
-			return
-		}
-		if len(data) == 0 {
-			responses.WriteError(w, http.StatusBadRequest, "ERR_EMPTY_BLOB", "Blob must not be empty.")
-			return
-		}
-
 		// The account comes from auth, never from the request.
 		key := blobstore.BlobKey{
 			Pseudonym:  account,
@@ -71,17 +55,25 @@ func Append(store blobstore.BlobStore, maxBytes int64) http.HandlerFunc {
 			Seq:        seq,
 		}
 
-		sha, err := store.Append(r.Context(), key, r.URL.Query().Get("prevSha256"), data)
+		sha, size, err := store.Append(r.Context(), key, r.URL.Query().Get("prevSha256"), r.Body)
 		switch {
 		case errors.Is(err, blobstore.ErrSeqConflict):
 			responses.WriteError(w, http.StatusConflict, "ERR_SEQ_CONFLICT", err.Error())
+		case errors.Is(err, blobstore.ErrEmptyBlob):
+			responses.WriteError(w, http.StatusBadRequest, "ERR_EMPTY_BLOB", "Blob must not be empty.")
+		case errors.Is(err, middlewares.ErrBodyDigestMismatch):
+			responses.WriteError(w, http.StatusBadRequest, "ERR_BODY_DIGEST_MISMATCH",
+				"Body does not hash to the digest the auth proof signed. Nothing was stored.")
 		case err != nil:
+			// An oversize body also lands here as a read error, but the size guard owns
+			// that response and rewrites this one into the 413.
 			responses.WriteError(w, http.StatusInternalServerError, "ERR_INTERNAL", "Could not store the blob.")
 		default:
 			responses.WriteJSON(w, http.StatusCreated, map[string]any{
 				"status": "success",
 				"seq":    seq,
 				"sha256": sha,
+				"size":   size,
 			})
 		}
 	}

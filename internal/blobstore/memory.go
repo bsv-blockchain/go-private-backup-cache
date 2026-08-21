@@ -1,10 +1,12 @@
 package blobstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sort"
 	"sync"
 	"time"
@@ -38,38 +40,50 @@ func rowKey(k BlobKey) string {
 	return fmt.Sprintf("%s\x00%s\x00%d\x00%d", k.Pseudonym, k.DeviceID, k.Generation, k.Seq)
 }
 
-// Append implements BlobStore.
-func (m *MemoryStore) Append(_ context.Context, k BlobKey, prev string, data []byte) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+// Append implements BlobStore. The body is drained before the lock is taken, so a slow
+// upload does not block readers; the sequence check runs twice — advisory before the
+// drain, authoritative under the lock — mirroring how the Postgres store's transaction
+// settles conflicts at commit time.
+func (m *MemoryStore) Append(_ context.Context, k BlobKey, prev string, body io.Reader) (string, int64, error) {
+	m.mu.RLock()
 	want := m.headSeqLocked(k.Pseudonym, k.DeviceID, k.Generation) + 1
+	m.mu.RUnlock()
 	if k.Seq != want {
-		return "", fmt.Errorf("%w: expected seq %d, got %d", ErrSeqConflict, want, k.Seq)
+		return "", 0, fmt.Errorf("%w: expected seq %d, got %d", ErrSeqConflict, want, k.Seq)
+	}
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return "", 0, fmt.Errorf("read body: %w", err)
+	}
+	if len(data) == 0 {
+		return "", 0, ErrEmptyBlob
 	}
 
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
 
-	stored := make([]byte, len(data))
-	copy(stored, data)
-
-	m.rows[rowKey(k)] = &row{key: k, sha256: sha, prevSha256: prev, data: stored, createdAt: m.now()}
-	return sha, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if want := m.headSeqLocked(k.Pseudonym, k.DeviceID, k.Generation) + 1; k.Seq != want {
+		return "", 0, fmt.Errorf("%w: expected seq %d, got %d", ErrSeqConflict, want, k.Seq)
+	}
+	m.rows[rowKey(k)] = &row{key: k, sha256: sha, prevSha256: prev, data: data, createdAt: m.now()}
+	return sha, int64(len(data)), nil
 }
 
 // Get implements BlobStore.
-func (m *MemoryStore) Get(_ context.Context, k BlobKey) ([]byte, error) {
+func (m *MemoryStore) Get(_ context.Context, k BlobKey) (io.ReadCloser, int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	r, ok := m.rows[rowKey(k)]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, 0, ErrNotFound
 	}
 	out := make([]byte, len(r.data))
 	copy(out, r.data)
-	return out, nil
+	return io.NopCloser(bytes.NewReader(out)), int64(len(out)), nil
 }
 
 // Index implements BlobStore.

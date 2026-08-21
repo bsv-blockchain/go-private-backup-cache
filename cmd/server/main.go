@@ -19,6 +19,7 @@ import (
 
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/blobstore"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/config"
+	"github.com/bsv-blockchain/go-private-backup-cache/internal/nonce"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/logger"
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/server"
 	walletpkg "github.com/bsv-blockchain/go-private-backup-cache/internal/wallet"
@@ -40,20 +41,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, closeStore, err := openStore(cfg, log)
+	store, nonces, closeStore, err := openStore(cfg, log)
 	if err != nil {
 		log.Error("failed to open store", "error", err)
 		os.Exit(1)
 	}
 	defer closeStore()
 
-	srv := server.New(server.Deps{
+	srv, err := server.New(server.Deps{
 		Wallet:       srvWallet,
 		Store:        store,
+		Nonces:       nonces,
 		Logger:       log,
 		MaxBlobBytes: cfg.MaxBlobBytes,
 		Port:         cfg.Port,
 	})
+	if err != nil {
+		log.Error("failed to build server", "error", err)
+		os.Exit(1)
+	}
 
 	go func() {
 		log.Info("listening", "port", cfg.Port, "maxBlobBytes", cfg.MaxBlobBytes)
@@ -77,20 +83,26 @@ func main() {
 
 // openStore selects the backing store.
 //
-// Without DATABASE_URL the service runs on an in-memory store. That is useful for local
+// Without DATABASE_URL the service runs on in-memory stores. That is useful for local
 // development and integration tests, and it is announced loudly because everything is lost
-// on restart — which for a backup service would be a bad surprise in production.
-func openStore(cfg *config.Config, log *slog.Logger) (blobstore.BlobStore, func(), error) {
+// on restart — which for a backup service would be a bad surprise in production. The nonce
+// store rides the same switch: replay protection must live in the shared database once
+// there is one, or two replicas would each accept the same proof.
+func openStore(cfg *config.Config, log *slog.Logger) (blobstore.BlobStore, nonce.Store, func(), error) {
 	if cfg.DatabaseURL == "" {
 		log.Warn("DATABASE_URL is not set — using an in-memory store; ALL DATA IS LOST ON RESTART")
-		return blobstore.NewMemoryStore(), func() {}, nil
+		return blobstore.NewMemoryStore(), nonce.NewMemoryStore(), func() {}, nil
 	}
 
 	pg, err := blobstore.NewPostgresStore(cfg.DatabaseURL)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return pg, func() {
+	nonces, err := nonce.NewPostgresStore(pg.DB())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return pg, nonces, func() {
 		if cerr := pg.Close(); cerr != nil {
 			log.Error("failed to close store", "error", cerr)
 		}
