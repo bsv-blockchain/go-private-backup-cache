@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,7 +43,7 @@ func routerAs(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 		})
 	})
 	r.Get("/v1/manifest", handlers.Manifest(store))
-	r.Post("/v1/log/{deviceId}", handlers.Append(store, 1<<20))
+	r.Post("/v1/log/{deviceId}", handlers.Append(store))
 	r.Get("/v1/log/{deviceId}", handlers.Index(store))
 	r.Get("/v1/log/{deviceId}/{seq}", handlers.Blob(store))
 	r.Delete("/v1/generation/{deviceId}/{generation}", handlers.PruneGeneration(store))
@@ -52,10 +53,22 @@ func routerAs(store blobstore.BlobStore, identity *ec.PublicKey) http.Handler {
 
 func seedAlice(t *testing.T, store blobstore.BlobStore, alice *ec.PublicKey) {
 	t.Helper()
-	_, err := store.Append(context.Background(), blobstore.BlobKey{
+	_, _, err := store.Append(context.Background(), blobstore.BlobKey{
 		Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
-	}, "", []byte("alice-secret-ciphertext"))
+	}, "", bytes.NewReader([]byte("alice-secret-ciphertext")))
 	require.NoError(t, err)
+}
+
+// readBlob drains a stored blob so the tests can compare ciphertext, closing the stream
+// the store handed over.
+func readBlob(t *testing.T, store blobstore.BlobStore, k blobstore.BlobKey) []byte {
+	t.Helper()
+	rc, _, err := store.Get(context.Background(), k)
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	return got
 }
 
 func TestNoReadRouteLeaksAcrossIdentities(t *testing.T) {
@@ -120,17 +133,15 @@ func TestAppendCannotWriteIntoAnotherIdentitysLog(t *testing.T) {
 	routerAs(store, bob).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code)
 
-	aliceBlob, err := store.Get(context.Background(), blobstore.BlobKey{
+	aliceBlob := readBlob(t, store, blobstore.BlobKey{
 		Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
 	})
-	require.NoError(t, err)
 	require.Equal(t, []byte("alice-secret-ciphertext"), aliceBlob,
 		"another identity's write overwrote this identity's blob")
 
-	bobBlob, err := store.Get(context.Background(), blobstore.BlobKey{
+	bobBlob := readBlob(t, store, blobstore.BlobKey{
 		Pseudonym: bob.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
 	})
-	require.NoError(t, err)
 	require.Equal(t, []byte("bob-wrote-this"), bobBlob)
 }
 
@@ -141,9 +152,9 @@ func TestPruneCannotDeleteAnotherIdentitysData(t *testing.T) {
 
 	// Give Alice three generations so generation 1 would be prunable by her.
 	for gen := 1; gen <= 3; gen++ {
-		_, err := store.Append(context.Background(), blobstore.BlobKey{
+		_, _, err := store.Append(context.Background(), blobstore.BlobKey{
 			Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: gen, Seq: 1,
-		}, "", []byte("alice-secret-ciphertext"))
+		}, "", bytes.NewReader([]byte("alice-secret-ciphertext")))
 		require.NoError(t, err)
 	}
 
@@ -153,10 +164,11 @@ func TestPruneCannotDeleteAnotherIdentitysData(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 
 	// Alice's data survives untouched.
-	_, err := store.Get(context.Background(), blobstore.BlobKey{
+	rc, _, err := store.Get(context.Background(), blobstore.BlobKey{
 		Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
 	})
 	require.NoError(t, err, "another identity deleted this identity's generation")
+	require.NoError(t, rc.Close())
 }
 
 func TestEraseCannotTouchAnotherIdentitysData(t *testing.T) {
@@ -172,10 +184,11 @@ func TestEraseCannotTouchAnotherIdentitysData(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"deleted":0`, "bob's erasure found bob's data, which is none")
 
-	_, err := store.Get(context.Background(), blobstore.BlobKey{
+	rc, _, err := store.Get(context.Background(), blobstore.BlobKey{
 		Pseudonym: alice.ToDERHex(), DeviceID: secDevice, Generation: 1, Seq: 1,
 	})
 	require.NoError(t, err, "another identity erased this identity's account")
+	require.NoError(t, rc.Close())
 }
 
 func TestManifestOnlyEverListsTheCallersOwnDevices(t *testing.T) {
@@ -184,9 +197,9 @@ func TestManifestOnlyEverListsTheCallersOwnDevices(t *testing.T) {
 	bob := identityFor(t, 2)
 	seedAlice(t, store, alice)
 
-	_, err := store.Append(context.Background(), blobstore.BlobKey{
+	_, _, err := store.Append(context.Background(), blobstore.BlobKey{
 		Pseudonym: bob.ToDERHex(), DeviceID: "ffffffffffffffffffffffffffffffff", Generation: 1, Seq: 1,
-	}, "", []byte("bob-ciphertext"))
+	}, "", bytes.NewReader([]byte("bob-ciphertext")))
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()

@@ -42,9 +42,14 @@ func deviceID(w http.ResponseWriter, raw string) (string, bool) {
 }
 
 // positiveIntParam reads a required positive integer query parameter.
+//
+// The upper bound matches parsePathInt's: the storage columns are 32-bit, so a value the
+// read and prune routes can never address must not be writable either — without the
+// bound, a generation above 2^30 could be appended but never pruned, and one above 2^31
+// surfaced as a 500 from the column instead of a 400 from validation.
 func positiveIntParam(r *http.Request, name string) (int, bool) {
 	v, err := strconv.Atoi(r.URL.Query().Get(name))
-	if err != nil || v < 1 {
+	if err != nil || v < 1 || v > 1<<30 {
 		return 0, false
 	}
 	return v, true

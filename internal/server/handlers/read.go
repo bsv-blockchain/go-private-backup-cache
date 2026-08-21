@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -75,8 +77,9 @@ func Index(store blobstore.BlobStore) http.HandlerFunc {
 
 // Blob handles GET /v1/log/{deviceId}/{seq}?generation=
 //
-// Responds with raw ciphertext. The client's AuthFetch rebuilds the body as a Uint8Array,
-// so binary needs no encoding on the way back — unlike upload.
+// Responds with raw ciphertext, STREAMED from the store: at the new cap a blob is up to
+// hundreds of megabytes and never resident in this process. Content-Length is known up
+// front from the metadata row, so clients can show restore progress.
 func Blob(store blobstore.BlobStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		account := pseudonym(w, r)
@@ -95,7 +98,7 @@ func Blob(store blobstore.BlobStore) http.HandlerFunc {
 			return
 		}
 
-		data, err := store.Get(r.Context(), blobstore.BlobKey{
+		body, size, err := store.Get(r.Context(), blobstore.BlobKey{
 			Pseudonym: account, DeviceID: device, Generation: generation, Seq: seq,
 		})
 		switch {
@@ -105,10 +108,17 @@ func Blob(store blobstore.BlobStore) http.HandlerFunc {
 		case err != nil:
 			responses.WriteError(w, http.StatusInternalServerError, "ERR_INTERNAL", "Could not read the blob.")
 		default:
+			defer func() {
+				if cerr := body.Close(); cerr != nil {
+					slog.Error("failed to close blob stream", "error", cerr)
+				}
+			}()
 			w.Header().Set("Content-Type", ContentTypeOctetStream)
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 			w.WriteHeader(http.StatusOK)
-			if _, werr := w.Write(data); werr != nil {
-				slog.Error("failed to write blob body", "error", werr)
+			if _, werr := io.Copy(w, body); werr != nil {
+				// Too late for a status change; the truncated body is the signal.
+				slog.Error("failed to stream blob body", "error", werr)
 			}
 		}
 	}

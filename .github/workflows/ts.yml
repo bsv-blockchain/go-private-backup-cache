@@ -1,0 +1,68 @@
+name: ts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      # dist/ is gitignored, so the client must be built here before anything
+      # depends on it. test-client's file:../ts-client dependency is installed by
+      # npm as a symlink ("link": true in its lockfile), so this build is what the
+      # interop suite actually imports.
+      - name: Build and test ts-client
+        working-directory: ts-client
+        run: |
+          npm ci
+          npm run build
+          npm test
+      - name: Build the Go server
+        run: go build -o /tmp/backup-cache-server ./cmd/server
+      # No DATABASE_URL: the memory store is the point — the interop suite proves
+      # the protocol, not persistence, and go.yml already covers postgres. The key
+      # is a throwaway literal (the secp256k1 generator scalar): this server holds
+      # no data worth protecting and dies with the job.
+      - name: Boot the server and wait for /health
+        env:
+          SERVER_PRIVATE_KEY: '0000000000000000000000000000000000000000000000000000000000000001'
+          PORT: '8080'
+          LOG_LEVEL: warn
+        run: |
+          /tmp/backup-cache-server > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/health > /dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'server never became healthy'
+          cat /tmp/server.log
+          exit 1
+      - name: Run the interop suite against the live server
+        working-directory: test-client
+        env:
+          SERVER_URL: http://localhost:8080
+        run: |
+          npm ci
+          node interop.mjs
+      # The suite's own output says which check failed; the server log says why.
+      - name: Dump the server log
+        if: failure()
+        run: cat /tmp/server.log
+      - name: Kill the server
+        if: always()
+        run: kill "$(cat /tmp/server.pid)" 2>/dev/null || true

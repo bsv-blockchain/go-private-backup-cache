@@ -12,13 +12,14 @@ import (
 
 // The middleware is tested directly here because the interesting case only arises once
 // something downstream actually reads the body. An unauthenticated request never gets that
-// far — the auth middleware rejects it on the missing headers first — so the router-level
-// test cannot reach this path. In production the reader is the auth middleware building its
-// signature payload, and it is that read whose failure used to be reported as an auth
-// error.
+// far — the auth middleware refuses it on the missing proof header before touching a byte —
+// so the router-level test cannot reach this path. In production the downstream reader is
+// the store streaming an authenticated upload, and it is that read whose mid-stream failure
+// would otherwise be reported as something other than a size problem.
 
-// readAll stands in for the auth middleware: it consumes the body, then answers with
-// whatever it makes of the read error. Here it does the wrong thing on purpose.
+// readAllThenClaimAuthFailure stands in for the downstream reader: it consumes the body,
+// then answers with whatever it makes of the read error. Here it does the wrong thing on
+// purpose — blaming authentication, the historical misreport this guard exists to override.
 func readAllThenClaimAuthFailure(t *testing.T) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,7 @@ func TestGuardOverridesDownstreamAnswerOnOverflow(t *testing.T) {
 	const blobLimit int64 = 4096
 	h := maxBody(blobLimit)(readAllThenClaimAuthFailure(t))
 
-	body := bytes.Repeat([]byte("x"), int(blobLimit+AuthEnvelopeSlack+1))
+	body := bytes.Repeat([]byte("x"), int(blobLimit+1))
 	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev", bytes.NewReader(body))
 	// No declared length: the guard has to count rather than read the header.
 	req.ContentLength = -1
@@ -46,28 +47,14 @@ func TestGuardOverridesDownstreamAnswerOnOverflow(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "authentication")
 }
 
+// A body of exactly the cap must pass: the proof travels in a header, so the body on the
+// wire IS the blob and the cap needs no envelope slack on top.
 func TestGuardLeavesUnderCapRequestsAlone(t *testing.T) {
 	const blobLimit int64 = 4096
 	h := maxBody(blobLimit)(readAllThenClaimAuthFailure(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev",
 		bytes.NewReader(bytes.Repeat([]byte("x"), int(blobLimit))))
-	req.ContentLength = -1
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusNoContent, rec.Code)
-}
-
-// A body between the blob cap and the envelope slack must survive the guard: the auth
-// envelope legitimately pushes a maximum-size blob past the blob cap, and the handler's own
-// bounded read is what draws the real line.
-func TestGuardAllowsEnvelopeSlack(t *testing.T) {
-	const blobLimit int64 = 4096
-	h := maxBody(blobLimit)(readAllThenClaimAuthFailure(t))
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev",
-		bytes.NewReader(bytes.Repeat([]byte("x"), int(blobLimit+AuthEnvelopeSlack))))
 	req.ContentLength = -1
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -84,7 +71,7 @@ func TestGuardRejectsOnDeclaredLengthWithoutReading(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev", bytes.NewReader([]byte("x")))
-	req.ContentLength = blobLimit + AuthEnvelopeSlack + 1
+	req.ContentLength = blobLimit + 1
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
