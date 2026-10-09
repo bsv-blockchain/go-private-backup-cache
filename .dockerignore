@@ -6,18 +6,6 @@
 Dockerfile
 contrib/
 
-# Secrets: never bake local environment files into an image layer
-.env
-.env.*
-
-# Non-Go sources: the image only builds ./cmd/server
-docs/
-test-client/
-ts-client/
-package.json
-package-lock.json
-*.md
-
 ##
 ## Common with .gitignore
 ##

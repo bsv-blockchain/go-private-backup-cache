@@ -31,9 +31,6 @@ A comprehensive list of built-in features that ship with this repository.
 * **AI Playbook** – machine‑readable guidelines in [tech conventions](../tech-conventions/ai-compliance.md)
 * **Go-Pre-commit System** - [High-performance Go-native pre-commit hooks](https://github.com/mrz1836/go-pre-commit) with 17x faster execution—run the same formatting, linting, and tests before every commit, just like CI.
 * **Zero Python Dependencies** - Pure Go implementation with [modular environment-based configuration](../env/README.md).
-* **Container Images on Every Merge** – the service image is built on every PR and published to [GHCR](https://github.com/bsv-blockchain/go-private-backup-cache/pkgs/container/go-private-backup-cache) by a dedicated [workflow](../workflows/docker-publish.yml).
-* **Cross-Language Interop Proof** – the [TypeScript client](../../ts-client) is exercised against a live Go server on every PR via the [interop suite](../../test-client).
-* **Real-Database Integration Tests** – every store invariant runs against both the memory store and a real [PostgreSQL](https://www.postgresql.org/) service.
 * **DevContainers for Instant Onboarding** – Launch a ready-to-code environment in seconds with [VS Code DevContainers](https://containers.dev/) and the included [.devcontainer.json](../../.devcontainer.json) config.
 
 <br>

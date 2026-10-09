@@ -11,12 +11,12 @@
             "type": "pickString"
         },
         {
-            "default": "main",
+            "default": "master",
             "description": "Target branch for version bump",
             "id": "targetBranch",
             "options": [
-                "main",
-                "master"
+                "master",
+                "main"
             ],
             "type": "pickString"
         },

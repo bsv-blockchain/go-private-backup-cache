@@ -36,8 +36,6 @@ ignore:
   - "examples/**"
   - "mocks/**"
   - "testing/**"
-  - "test-client/**"
-  - "ts-client/**"
 
 # Parsers
 # --------------
