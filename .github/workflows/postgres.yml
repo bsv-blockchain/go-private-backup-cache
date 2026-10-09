@@ -1,0 +1,64 @@
+# ------------------------------------------------------------------------------------
+#  Postgres Integration
+#
+#  Purpose: Run the full Go test suite against a real PostgreSQL server.
+#
+#  The Postgres-backed tests (blob store, nonce store, boot migrations, append races)
+#  skip unless TEST_DATABASE_URL is set. GoFortress is synced from the shared template
+#  and provisions no database, so without this workflow those tests would never run in
+#  CI. With it, every BlobStore invariant is enforced against both the memory and the
+#  Postgres implementation.
+#
+#  Triggers: pushes to the default branch and every pull request.
+# ------------------------------------------------------------------------------------
+
+name: Postgres
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - "**"
+
+# Security: Restrict default permissions (jobs must explicitly request what they need)
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 🐘 Postgres Integration Tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: backup_cache_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: 🧪 Test (memory + postgres, race detector)
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/backup_cache_test?sslmode=disable
+        run: go test -race -count=1 ./...

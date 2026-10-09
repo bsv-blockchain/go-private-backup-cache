@@ -1,68 +1,109 @@
-name: ts
+# ------------------------------------------------------------------------------------
+#  TypeScript Client & Interop
+#
+#  Purpose: Build and test the TypeScript client (ts-client/), then prove it speaks the
+#           same protocol as the Go server by running the interop suite (test-client/)
+#           against a live server built from this commit.
+#
+#  Why this lives outside GoFortress: GoFortress is a Go-only pipeline synced from the
+#  shared template. The TypeScript client and the cross-language check are specific to
+#  this repository, so they get their own workflow.
+#
+#  Triggers: pushes to the default branch and every pull request.
+# ------------------------------------------------------------------------------------
+
+name: TypeScript
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - master
   pull_request:
+    branches:
+      - "**"
 
-permissions:
-  contents: read
+# Security: Restrict default permissions (jobs must explicitly request what they need)
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   interop:
-    runs-on: ubuntu-latest
+    name: 🧪 TS Client & Interop
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: 📥 Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: '22'
-      - uses: actions/setup-go@v5
+          persist-credentials: false
+
+      - name: 🟢 Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          go-version: '1.26'
-      # dist/ is gitignored, so the client must be built here before anything
-      # depends on it. test-client's file:../ts-client dependency is installed by
-      # npm as a symlink ("link": true in its lockfile), so this build is what the
-      # interop suite actually imports.
-      - name: Build and test ts-client
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            ts-client/package-lock.json
+            test-client/package-lock.json
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # dist/ is gitignored, so the client must be built here before anything depends on
+      # it. `npm test` builds first, and test-client's file:../ts-client dependency is
+      # installed as a symlink, so this build is what the interop suite actually imports.
+      - name: 📦 Build and test ts-client
         working-directory: ts-client
         run: |
           npm ci
-          npm run build
           npm test
-      - name: Build the Go server
-        run: go build -o /tmp/backup-cache-server ./cmd/server
-      # No DATABASE_URL: the memory store is the point — the interop suite proves
-      # the protocol, not persistence, and go.yml already covers postgres. The key
-      # is a throwaway literal (the secp256k1 generator scalar): this server holds
-      # no data worth protecting and dies with the job.
-      - name: Boot the server and wait for /health
+
+      - name: 🏗️ Build the Go server
+        run: go build -o "$RUNNER_TEMP/backup-cache-server" ./cmd/server
+
+      # No DATABASE_URL: the memory store is the point. The interop suite proves the
+      # protocol, not persistence (postgres.yml covers that). The key is a throwaway
+      # literal (the secp256k1 generator scalar): this server holds no data worth
+      # protecting and dies with the job.
+      - name: 🚀 Boot the server and wait for /health
         env:
-          SERVER_PRIVATE_KEY: '0000000000000000000000000000000000000000000000000000000000000001'
-          PORT: '8080'
+          SERVER_PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
+          PORT: "8080"
           LOG_LEVEL: warn
         run: |
-          /tmp/backup-cache-server > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
-          for i in $(seq 1 30); do
+          "$RUNNER_TEMP/backup-cache-server" > "$RUNNER_TEMP/server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/server.pid"
+          for _ in $(seq 1 30); do
             if curl -fsS http://localhost:8080/health > /dev/null 2>&1; then
               exit 0
             fi
             sleep 1
           done
-          echo 'server never became healthy'
-          cat /tmp/server.log
+          echo "::error::server never became healthy"
+          cat "$RUNNER_TEMP/server.log"
           exit 1
-      - name: Run the interop suite against the live server
+
+      - name: 🔗 Run the interop suite against the live server
         working-directory: test-client
         env:
           SERVER_URL: http://localhost:8080
         run: |
           npm ci
           node interop.mjs
+
       # The suite's own output says which check failed; the server log says why.
-      - name: Dump the server log
+      - name: 📄 Dump the server log
         if: failure()
-        run: cat /tmp/server.log
-      - name: Kill the server
+        run: cat "$RUNNER_TEMP/server.log"
+
+      - name: 🛑 Stop the server
         if: always()
-        run: kill "$(cat /tmp/server.pid)" 2>/dev/null || true
+        run: kill "$(cat "$RUNNER_TEMP/server.pid")" 2>/dev/null || true
