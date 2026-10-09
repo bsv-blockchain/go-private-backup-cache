@@ -59,13 +59,3 @@ codecov.yml @mrz1836
 
 # Gitpod configuration
 .gitpod.yml @mrz1836
-
-# Container image
-Dockerfile @mrz1836
-.dockerignore @mrz1836
-
-# TypeScript client and interop suite (one npm workspace, one root lockfile)
-/package.json @mrz1836
-/package-lock.json @mrz1836
-ts-client/package.json @mrz1836
-test-client/package.json @mrz1836

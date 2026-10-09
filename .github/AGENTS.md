@@ -46,9 +46,4 @@ Our technical standards are organized into focused, portable documents in the `.
 | `.github/tech-conventions/` | Technical conventions and standards for development     |
 | `.github/workflows/`        | GitHub Actions workflows for CI/CD                      |
 | `.vscode/`                  | VS Code settings and extensions for development         |
-| `client/`                   | Go client library for the backup cache service          |
-| `cmd/server/`               | Service entrypoint (HTTP server binary)                 |
-| `docs/`                     | Protocol specifications and design documents            |
-| `internal/`                 | Server packages: auth proofs, stores, handlers, OTel    |
-| `test-client/`              | Node.js interop suite run against a live Go server      |
-| `ts-client/`                | TypeScript client (`@bsv/backup-cache-client`)          |
+| `.` (root)                  | Source files and tests for the local package            |
