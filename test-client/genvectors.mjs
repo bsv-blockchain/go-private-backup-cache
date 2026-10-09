@@ -27,7 +27,7 @@ const cases = [
     name: 'upload with body hash bound into action',
     action: 'POST /v1/log/0123456789abcdef0123456789abcdef?seq=1&generation=1 sha256=2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
     expiresAt: 1755700012345,
-    nonce: 'Hx0cGxoZGBcWFRQTEhEQDw4NDAsKCQgHBgUEAwIBAA=='
+    nonce: 'Hx4dHBsaGRgXFhUUExIREA8ODQwLCgkIBwYFBAMCAQA='
   },
   {
     name: 'delete with query',
