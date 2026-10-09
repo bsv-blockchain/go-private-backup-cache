@@ -436,7 +436,7 @@ magex deps:update
 
 This command ensures all dependencies are brought up to date in a single step, including Go modules and any tools managed by [MAGE-X](https://github.com/mrz1836/mage-x). It is the recommended way to keep your development environment and CI in sync with the latest versions.
 
-npm dependencies for [`ts-client/`](ts-client) and [`test-client/`](test-client) are kept current by [Dependabot](.github/dependabot.yml).
+[`ts-client/`](ts-client) and [`test-client/`](test-client) are one npm workspace with a single root lockfile, kept current by [Dependabot](.github/dependabot.yml): each update lands in both at once.
 
 </details>
 
@@ -466,8 +466,8 @@ TEST_DATABASE_URL=postgres://... go test ./... -race
 Run the TypeScript client tests and the cross-language interop suite (see the [test-client README](test-client/README.md)):
 
 ```bash script
-cd ts-client && npm ci && npm test
-cd ../test-client && npm ci && SERVER_URL=http://localhost:8080 npm test
+npm ci && npm test --workspace ts-client
+SERVER_URL=http://localhost:8080 npm test --workspace test-client
 ```
 
 <br/>

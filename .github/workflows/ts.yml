@@ -3,13 +3,15 @@
 #
 #  Purpose: Build and test the TypeScript client (ts-client/), then prove it speaks the
 #           same protocol as the Go server by running the interop suite (test-client/)
-#           against a live server built from this commit.
+#           against live servers built from this commit.
 #
 #  Why this lives outside GoFortress: GoFortress is a Go-only pipeline synced from the
 #  shared template. The TypeScript client and the cross-language check are specific to
 #  this repository, so they get their own workflow.
 #
 #  Triggers: pushes to the default branch and every pull request.
+#
+#  Maintainer: @mrz1836
 # ------------------------------------------------------------------------------------
 
 name: TypeScript
@@ -48,62 +50,88 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: |
-            ts-client/package-lock.json
-            test-client/package-lock.json
 
       - name: 🐹 Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      # dist/ is gitignored, so the client must be built here before anything depends on
-      # it. `npm test` builds first, and test-client's file:../ts-client dependency is
-      # installed as a symlink, so this build is what the interop suite actually imports.
-      - name: 📦 Build and test ts-client
-        working-directory: ts-client
+      # ts-client and test-client are one npm workspace with one root lockfile, so a single
+      # install resolves exactly one @bsv/sdk for the client and the suite alike. It runs
+      # with --ignore-scripts: no dependency needs an install script, and one would run
+      # with this checkout and the network in reach. `npm audit signatures` then checks
+      # every installed tarball against the registry's signing keys (and its provenance
+      # attestation, where one is published).
+      - name: 📦 Install the npm workspace
         run: |
-          npm ci
-          npm test
+          npm ci --ignore-scripts
+          npm audit signatures
+
+      # dist/ is gitignored, so the client must be built here before anything depends on
+      # it. `npm test` builds first, and the workspace links @bsv/backup-cache-client to
+      # ts-client/, so this build is what the interop suite actually imports.
+      - name: 🧪 Build and test ts-client
+        run: npm test --workspace ts-client
 
       - name: 🏗️ Build the Go server
         run: go build -o "$RUNNER_TEMP/backup-cache-server" ./cmd/server
 
+      # Two servers, because two interop checks need opposite caps: the 413 refusal only
+      # runs when the cap is small enough to upload past cheaply, and the 8 MiB round-trip
+      # only runs when the cap is above 8 MiB. Each pass skips the other's check, so only
+      # both together run the whole suite.
+      #
       # No DATABASE_URL: the memory store is the point. The interop suite proves the
       # protocol, not persistence (postgres.yml covers that). The key is a throwaway
-      # literal (the secp256k1 generator scalar): this server holds no data worth
-      # protecting and dies with the job.
-      - name: 🚀 Boot the server and wait for /health
+      # literal (the secp256k1 generator scalar): these servers hold no data worth
+      # protecting and die with the job.
+      - name: 🚀 Boot the servers and wait for /health
         env:
           SERVER_PRIVATE_KEY: "0000000000000000000000000000000000000000000000000000000000000001"
-          PORT: "8080"
           LOG_LEVEL: warn
         run: |
-          "$RUNNER_TEMP/backup-cache-server" > "$RUNNER_TEMP/server.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/server.pid"
+          PORT=8080 "$RUNNER_TEMP/backup-cache-server" > "$RUNNER_TEMP/server-default-cap.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/server-default-cap.pid"
+          PORT=8081 MAX_BLOB_BYTES=1048576 "$RUNNER_TEMP/backup-cache-server" > "$RUNNER_TEMP/server-small-cap.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/server-small-cap.pid"
           for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:8080/health > /dev/null 2>&1; then
+            if curl -fsS http://localhost:8080/health > /dev/null 2>&1 &&
+              curl -fsS http://localhost:8081/health > /dev/null 2>&1; then
               exit 0
             fi
             sleep 1
           done
-          echo "::error::server never became healthy"
-          cat "$RUNNER_TEMP/server.log"
+          echo "::error::a server never became healthy"
+          cat "$RUNNER_TEMP"/server-*.log
           exit 1
 
-      - name: 🔗 Run the interop suite against the live server
+      - name: 🔗 Interop at the default 200 MiB cap (8 MiB round-trip)
         working-directory: test-client
         env:
           SERVER_URL: http://localhost:8080
-        run: |
-          npm ci
-          node interop.mjs
+        run: node interop.mjs
 
-      # The suite's own output says which check failed; the server log says why.
-      - name: 📄 Dump the server log
+      - name: 🔗 Interop at a 1 MiB cap (413 oversize refusal)
+        working-directory: test-client
+        env:
+          SERVER_URL: http://localhost:8081
+        run: node interop.mjs
+
+      # The suite's own output says which check failed; the server logs say why. A failure
+      # before the boot step leaves no logs, so absent ones are skipped, not an error.
+      - name: 📄 Dump the server logs
         if: failure()
-        run: cat "$RUNNER_TEMP/server.log"
+        run: |
+          for log in "$RUNNER_TEMP"/server-*.log; do
+            [ -f "$log" ] || continue
+            echo "::group::$(basename "$log")"
+            cat "$log"
+            echo "::endgroup::"
+          done
 
-      - name: 🛑 Stop the server
+      - name: 🛑 Stop the servers
         if: always()
-        run: kill "$(cat "$RUNNER_TEMP/server.pid")" 2>/dev/null || true
+        run: |
+          for pid in "$RUNNER_TEMP"/server-*.pid; do
+            [ -f "$pid" ] && kill "$(cat "$pid")" 2>/dev/null || true
+          done

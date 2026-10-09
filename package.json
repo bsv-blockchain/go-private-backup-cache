@@ -1,0 +1,9 @@
+{
+  "name": "go-private-backup-cache-js",
+  "private": true,
+  "description": "npm workspace for the TypeScript client (ts-client/) and the cross-language interop suite (test-client/): one lockfile, so both always resolve the same @bsv packages.",
+  "workspaces": [
+    "ts-client",
+    "test-client"
+  ]
+}

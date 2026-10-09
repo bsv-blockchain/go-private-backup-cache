@@ -97,11 +97,15 @@ updates:
 
   # ──────────────────────────────────────────────────────────────
   # 4. npm (TypeScript client + cross-language interop suite)
+  #
+  #    ts-client/ and test-client/ are one npm workspace rooted at
+  #    "/", with one lockfile, so every bump lands in both at once.
+  #    @bsv/auth peers on @bsv/sdk, so the @bsv packages share a
+  #    group that includes majors: an sdk major arrives together
+  #    with the auth release that accepts it, never alone.
   # ──────────────────────────────────────────────────────────────
   - package-ecosystem: "npm"
-    directories:
-      - "/ts-client"
-      - "/test-client"
+    directory: "/"
     target-branch: "main"
     schedule:
       interval: "weekly"
@@ -110,7 +114,13 @@ updates:
       timezone: "America/New_York"
     allow:
       - dependency-type: "direct"
+    ignore:
+      # The workspace's own client: always linked from ts-client/, never the registry.
+      - dependency-name: "@bsv/backup-cache-client"
     groups:
+      bsv:
+        applies-to: version-updates
+        patterns: ["@bsv/*"]
       npm-all:
         applies-to: version-updates
         patterns: ["*"]
