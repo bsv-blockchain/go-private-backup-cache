@@ -83,7 +83,7 @@ func (t *tracingStore) DeleteAccount(ctx context.Context, pseudonym string) (int
 	return n, err
 }
 
-func (t *tracingStore) Ping() error { return t.next.Ping() }
+func (t *tracingStore) Ping(ctx context.Context) error { return t.next.Ping(ctx) }
 
 func recordErr(span trace.Span, err error) {
 	if err != nil {

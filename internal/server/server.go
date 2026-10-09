@@ -56,7 +56,7 @@ func NewRouter(d Deps) (http.Handler, error) {
 	// client needs BEFORE it can build its first proof.
 	r.Method(http.MethodGet, "/v1/limits", handlers.Limits(d.MaxBlobBytes, serverIdentityKey))
 
-	// NOTE: no payment middleware, deliberately and permanently. See README — charging
+	// No payment middleware, deliberately and permanently. See README — charging
 	// would require the client's real wallet to fund a transaction, whose BEEF carries
 	// complete prior transactions of that wallet, binding the pseudonym to the user's coin
 	// graph. It would also force this service to hold a funded wallet and a per-user
@@ -170,6 +170,7 @@ func (b *countingBody) Close() error { return b.rc.Close() }
 // wrong for what was only ever a size problem, so it is discarded here.
 type sizeGuard struct {
 	http.ResponseWriter
+
 	blobLimit int64
 	over      bool
 	wrote     bool

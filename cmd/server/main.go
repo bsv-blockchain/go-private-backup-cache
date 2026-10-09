@@ -1,8 +1,9 @@
 // Command server runs the private backup cache.
 //
 // An append-only, zero-knowledge store for encrypted wallet-backup blobs. Clients
-// authenticate with BRC-103/104 under a pseudonym derived from their wallet seed, and the
-// blobs arrive encrypted to that same seed. This process holds no key that can read them.
+// authenticate every request with a signed auth proof (docs/authproof-protocol.md) under a
+// pseudonym derived from their wallet seed, and the blobs arrive encrypted to that same
+// seed. This process holds no key that can read them.
 package main
 
 import (
@@ -51,7 +52,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, nonces, closeStore, err := openStore(cfg, log)
+	store, nonces, closeStore, err := openStore(context.Background(), cfg, log)
 	if err != nil {
 		log.Error("failed to open store", "error", err)
 		os.Exit(1)
@@ -101,17 +102,17 @@ func main() {
 // on restart — which for a backup service would be a bad surprise in production. The nonce
 // store rides the same switch: replay protection must live in the shared database once
 // there is one, or two replicas would each accept the same proof.
-func openStore(cfg *config.Config, log *slog.Logger) (blobstore.BlobStore, nonce.Store, func(), error) {
+func openStore(ctx context.Context, cfg *config.Config, log *slog.Logger) (blobstore.BlobStore, nonce.Store, func(), error) {
 	if cfg.DatabaseURL == "" {
 		log.Warn("DATABASE_URL is not set — using an in-memory store; ALL DATA IS LOST ON RESTART")
 		return blobstore.WithTracing(blobstore.NewMemoryStore()), nonce.NewMemoryStore(), func() {}, nil
 	}
 
-	pg, err := blobstore.NewPostgresStore(cfg.DatabaseURL)
+	pg, err := blobstore.NewPostgresStore(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	nonces, err := nonce.NewPostgresStore(pg.DB())
+	nonces, err := nonce.NewPostgresStore(ctx, pg.DB())
 	if err != nil {
 		return nil, nil, nil, err
 	}

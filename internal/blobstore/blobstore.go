@@ -89,7 +89,7 @@ type BlobStore interface {
 	// Index lists entry metadata for one generation, starting at sequence from.
 	Index(ctx context.Context, pseudonym, deviceID string, generation, from, limit int) ([]Entry, error)
 
-	// Manifest summarises every device and generation belonging to one pseudonym.
+	// Manifest summarizes every device and generation belonging to one pseudonym.
 	Manifest(ctx context.Context, pseudonym string) ([]DeviceSummary, error)
 
 	// DeleteGeneration removes a whole generation, refusing any within the retained
@@ -107,5 +107,5 @@ type BlobStore interface {
 	DeleteAccount(ctx context.Context, pseudonym string) (int64, error)
 
 	// Ping reports backing-store reachability for the health endpoint.
-	Ping() error
+	Ping(ctx context.Context) error
 }

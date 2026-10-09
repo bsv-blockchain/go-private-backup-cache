@@ -103,7 +103,7 @@ func (h *harness) send(t *testing.T, method, uri, headerValue string, body []byt
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req := httptest.NewRequest(method, uri, rdr)
+	req := httptest.NewRequestWithContext(t.Context(), method, uri, rdr)
 	if headerValue != "" {
 		req.Header.Set(authproof.Header, headerValue)
 	}
@@ -209,12 +209,15 @@ func TestAnUploadWhoseBodyDoesNotMatchTheSignedDigestFailsTheHandlersRead(t *tes
 	require.ErrorIs(t, h.next.bodyErr, middlewares.ErrBodyDigestMismatch)
 }
 
+// errNonceStoreUnreachable is the outage brokenNonceStore reports.
+var errNonceStoreUnreachable = errors.New("nonce store unreachable")
+
 // brokenNonceStore models the nonce backend being unreachable: Consume can neither
 // confirm nor deny reuse.
 type brokenNonceStore struct{}
 
 func (brokenNonceStore) Consume(context.Context, string, time.Time) (bool, error) {
-	return false, errors.New("nonce store unreachable")
+	return false, errNonceStoreUnreachable
 }
 
 func TestANonceStoreFailureIsAnInternalErrorAndTheHandlerNeverRuns(t *testing.T) {

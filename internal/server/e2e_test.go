@@ -83,7 +83,9 @@ func newE2E(t *testing.T) (*e2eEnv, *e2eClient, *e2eClient) {
 	env := &e2eEnv{base: ts.URL, walletKey: serverPriv.PubKey().ToDERHex()}
 
 	// No auth header on purpose: this must work before the client can sign anything.
-	resp, err := http.Get(ts.URL + "/v1/limits")
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/v1/limits", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&env.publishedLimits))
@@ -118,15 +120,22 @@ func (c *e2eClient) authHeader(t *testing.T, method, uri string, body []byte) st
 	return hv
 }
 
+// e2eResponse is what a test may still inspect once send has drained and closed the
+// body: the payload is returned alongside it, so no caller can reach a closed stream.
+type e2eResponse struct {
+	StatusCode int
+	Header     http.Header
+}
+
 // send performs one real HTTP request with the given header value, so replay tests can
 // reuse a header verbatim. body may be nil for bodyless requests.
-func (c *e2eClient) send(t *testing.T, method, uri, headerValue string, body []byte) (*http.Response, []byte) {
+func (c *e2eClient) send(t *testing.T, method, uri, headerValue string, body []byte) (e2eResponse, []byte) {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, c.base+uri, rdr)
+	req, err := http.NewRequestWithContext(t.Context(), method, c.base+uri, rdr)
 	require.NoError(t, err)
 	req.Header.Set(authproof.Header, headerValue)
 	if body != nil {
@@ -137,11 +146,11 @@ func (c *e2eClient) send(t *testing.T, method, uri, headerValue string, body []b
 	payload, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	return resp, payload
+	return e2eResponse{StatusCode: resp.StatusCode, Header: resp.Header}, payload
 }
 
 // do signs and sends in one step — the honest-client path.
-func (c *e2eClient) do(t *testing.T, method, uri string, body []byte) (*http.Response, []byte) {
+func (c *e2eClient) do(t *testing.T, method, uri string, body []byte) (e2eResponse, []byte) {
 	t.Helper()
 	return c.send(t, method, uri, c.authHeader(t, method, uri, body), body)
 }
@@ -153,9 +162,10 @@ type e2eAppendResult struct {
 	Size   int64  `json:"size"`
 }
 
-func (c *e2eClient) upload(t *testing.T, device string, seq int, body []byte) (*http.Response, e2eAppendResult) {
+// upload appends body as the first entry (seq 1, generation 1) of device's log.
+func (c *e2eClient) upload(t *testing.T, device string, body []byte) (e2eResponse, e2eAppendResult) {
 	t.Helper()
-	uri := "/v1/log/" + device + "?seq=" + strconv.Itoa(seq) + "&generation=1"
+	uri := "/v1/log/" + device + "?seq=1&generation=1"
 	resp, payload := c.do(t, http.MethodPost, uri, body)
 	var out e2eAppendResult
 	// Tolerate non-JSON error bodies; callers assert on the status first.
@@ -200,7 +210,7 @@ func TestUploadReportsTheStoredShaAndSize(t *testing.T) {
 	_, alice, _ := newE2E(t)
 	body := bytes.Repeat([]byte{0x5a}, 4<<10)
 
-	resp, out := alice.upload(t, e2eAliceDevice, 1, body)
+	resp, out := alice.upload(t, e2eAliceDevice, body)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	require.Equal(t, "success", out.Status)
 	require.Equal(t, 1, out.Seq)
@@ -212,7 +222,7 @@ func TestDownloadRoundTripsTheUploadedBytesExactly(t *testing.T) {
 	_, alice, _ := newE2E(t)
 	body := bytes.Repeat([]byte("ciphertext "), 400)
 
-	resp, _ := alice.upload(t, e2eAliceDevice, 1, body)
+	resp, _ := alice.upload(t, e2eAliceDevice, body)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	resp, got := alice.do(t, http.MethodGet, "/v1/log/"+e2eAliceDevice+"/1?generation=1", nil)
@@ -231,7 +241,7 @@ func TestAnEightMiBBlobRoundTripsExactly(t *testing.T) {
 	_, err := rand.Read(body)
 	require.NoError(t, err)
 
-	resp, out := alice.upload(t, e2eAliceDevice, 1, body)
+	resp, out := alice.upload(t, e2eAliceDevice, body)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	require.Equal(t, e2eSha256Hex(body), out.Sha256)
 	require.Equal(t, int64(len(body)), out.Size)
@@ -245,7 +255,7 @@ func TestAnEightMiBBlobRoundTripsExactly(t *testing.T) {
 func TestAnAppendAtTheWrongSequenceIsRefusedWithAConflict(t *testing.T) {
 	_, alice, _ := newE2E(t)
 
-	resp, _ := alice.upload(t, e2eAliceDevice, 1, []byte("first"))
+	resp, _ := alice.upload(t, e2eAliceDevice, []byte("first"))
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Skipping seq 2 would leave a silent hole in a restore; the server must refuse.
@@ -258,7 +268,7 @@ func TestAnAppendAtTheWrongSequenceIsRefusedWithAConflict(t *testing.T) {
 func TestOneTenantCannotReadAnothersBlobOrSeeItInTheManifest(t *testing.T) {
 	_, alice, bob := newE2E(t)
 
-	resp, _ := alice.upload(t, e2eAliceDevice, 1, []byte("alice-ciphertext"))
+	resp, _ := alice.upload(t, e2eAliceDevice, []byte("alice-ciphertext"))
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Bob uses alice's exact coordinates with his own perfectly valid proof. The response
@@ -312,7 +322,7 @@ func TestAnOversizeUploadIsRefusedBeforeAuthenticationIsEvenAttempted(t *testing
 	// One byte over the cap and no auth header at all. A 401 here would mean the auth
 	// layer ran first; the size guard owning the answer is what makes the 413 provable.
 	body := bytes.Repeat([]byte{0x00}, int(e2eMaxBlobBytes)+1)
-	req, err := http.NewRequest(http.MethodPost,
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
 		alice.base+"/v1/log/"+e2eAliceDevice+"?seq=1&generation=1", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", handlers.ContentTypeOctetStream)
@@ -342,7 +352,7 @@ func TestAnAuthenticatedChunkedUploadOverrunningTheCapMidStreamStoresNothing(t *
 	// from (*bytes.Reader, *bytes.Buffer, *strings.Reader), and ContentLength -1 makes
 	// the chunked encoding explicit rather than inferred.
 	body := io.NopCloser(io.LimitReader(rand.Reader, e2eMaxBlobBytes+16))
-	req, err := http.NewRequest(http.MethodPost, alice.base+uri, body)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, alice.base+uri, body)
 	require.NoError(t, err)
 	req.ContentLength = -1
 	req.Header.Set(authproof.Header, header)
@@ -364,12 +374,12 @@ func TestAnAuthenticatedChunkedUploadOverrunningTheCapMidStreamStoresNothing(t *
 
 	// The failed read aborted the store's transaction, so the sequence must look as if
 	// the upload never happened — a leftover row would poison every future append.
-	resp, payload = alice.do(t, http.MethodGet, "/v1/log/"+e2eAliceDevice+"?generation=1", nil)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	logResp, logPayload := alice.do(t, http.MethodGet, "/v1/log/"+e2eAliceDevice+"?generation=1", nil)
+	require.Equal(t, http.StatusOK, logResp.StatusCode)
 	var idx struct {
 		Entries []blobstore.Entry `json:"entries"`
 	}
-	require.NoError(t, json.Unmarshal(payload, &idx))
+	require.NoError(t, json.Unmarshal(logPayload, &idx))
 	require.Empty(t, idx.Entries, "an upload refused mid-stream left an entry in the log")
 }
 
@@ -377,9 +387,9 @@ func TestDeleteAccountErasesTheCallerAndOnlyTheCaller(t *testing.T) {
 	_, alice, bob := newE2E(t)
 	bobBody := []byte("bob-ciphertext")
 
-	resp, _ := alice.upload(t, e2eAliceDevice, 1, []byte("alice-ciphertext"))
+	resp, _ := alice.upload(t, e2eAliceDevice, []byte("alice-ciphertext"))
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
-	resp, _ = bob.upload(t, e2eBobDevice, 1, bobBody)
+	resp, _ = bob.upload(t, e2eBobDevice, bobBody)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	resp, payload := alice.do(t, http.MethodDelete, "/v1/account", nil)

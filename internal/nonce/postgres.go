@@ -24,9 +24,9 @@ type PostgresStore struct {
 }
 
 // NewPostgresStore runs migrations on an already-open pool (shared with the blobstore).
-func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
+func NewPostgresStore(ctx context.Context, db *sql.DB) (*PostgresStore, error) {
 	for i, m := range Migrations {
-		if _, err := db.Exec(m); err != nil {
+		if _, err := db.ExecContext(ctx, m); err != nil {
 			return nil, fmt.Errorf("nonce migration %d: %w", i, err)
 		}
 	}
@@ -40,7 +40,7 @@ func (s *PostgresStore) Consume(ctx context.Context, nonce string, expiresAt tim
 	// the nonce is ever looked at. Sweep opportunistically rather than per-request: the
 	// table only ever holds one validity window's worth of rows, so a 1-in-64 sweep keeps
 	// it bounded without a background job or a scheduler.
-	if rand.IntN(64) == 0 {
+	if rand.IntN(64) == 0 { //nolint:gosec // G404: sampling a sweep, not a secret; predictability is harmless
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM auth_nonces WHERE expires_at < now()`); err != nil {
 			return false, fmt.Errorf("sweep nonces: %w", err)
 		}

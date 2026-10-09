@@ -1,5 +1,85 @@
-.git
-.github
-test-client/node_modules
-*.md
+##
+## Specific to .dockerignore
+##
+
+.git/
+Dockerfile
+contrib/
+
+# Secrets: never bake local environment files into an image layer
 .env
+.env.*
+
+# Non-Go sources: the image only builds ./cmd/server
+docs/
+test-client/
+ts-client/
+*.md
+
+##
+## Common with .gitignore
+##
+
+# Temporary files
+*~
+*#
+.#*
+
+# Vendors
+node_modules/
+vendor/
+
+# Binaries for programs and plugins
+dist/
+!dist/linux/
+!dist/linux-amd64/
+!dist/linux-arm64/
+gin-bin
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Virtual environments
+.venv
+../venv
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Temporary directories in the project
+bin
+tmp
+
+# Project files not needed in the container
+.cursorrules
+.editorconfig
+.github
+.gitpod.yml
+.golangci.json
+.golangci.yml
+.goreleaser.yml
+.vscode
+LICENSE
+README.md
+codecov.yml

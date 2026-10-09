@@ -62,7 +62,7 @@ func post(t *testing.T, h http.Handler, target string, body []byte, contentType 
 
 func postBody(t *testing.T, h http.Handler, target string, body io.Reader, contentType string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, target, body)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, body)
 	req.Header.Set("Content-Type", contentType)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -213,7 +213,7 @@ func TestBlobReturnsRawBytes(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	routerFor(store, identity).ServeHTTP(rec,
-		httptest.NewRequest(http.MethodGet, "/v1/log/"+testDevice+"/1?generation=1", nil))
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/log/"+testDevice+"/1?generation=1", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, handlers.ContentTypeOctetStream, rec.Header().Get("Content-Type"))
@@ -225,7 +225,7 @@ func TestBlobReturnsRawBytes(t *testing.T) {
 func TestManifestEncodesEmptyArrayNotNull(t *testing.T) {
 	rec := httptest.NewRecorder()
 	routerFor(blobstore.NewMemoryStore(), keyFor(t, 1)).ServeHTTP(rec,
-		httptest.NewRequest(http.MethodGet, "/v1/manifest", nil))
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/manifest", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"devices":[]`)
@@ -235,7 +235,7 @@ func TestManifestEncodesEmptyArrayNotNull(t *testing.T) {
 // del issues a DELETE against the router under test.
 func del(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodDelete, target, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, target, nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

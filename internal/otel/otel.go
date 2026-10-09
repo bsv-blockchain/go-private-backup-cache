@@ -29,7 +29,8 @@ func Setup(ctx context.Context, endpoint, serviceName string) (func(context.Cont
 	// W3C traceparent propagation is set even without an exporter, so incoming trace
 	// headers still thread through to logs.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, propagation.Baggage{}))
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
 
 	if endpoint == "" {
 		return func(context.Context) error { return nil }, nil
