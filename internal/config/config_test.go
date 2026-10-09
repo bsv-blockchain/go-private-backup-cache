@@ -16,7 +16,7 @@ func TestLoadRequiresServerPrivateKey(t *testing.T) {
 	// not start pretending otherwise.
 	t.Setenv("SERVER_PRIVATE_KEY", "")
 	_, err := config.Load()
-	require.Error(t, err)
+	require.ErrorIs(t, err, config.ErrMissingServerKey)
 	require.Contains(t, err.Error(), "SERVER_PRIVATE_KEY")
 }
 
@@ -24,7 +24,7 @@ func TestLoadRejectsMalformedKeys(t *testing.T) {
 	for _, bad := range []string{"nothex", strings.Repeat("a", 63), strings.Repeat("z", 64)} {
 		t.Setenv("SERVER_PRIVATE_KEY", bad)
 		_, err := config.Load()
-		require.Error(t, err, "key %q must be rejected", bad)
+		require.ErrorIs(t, err, config.ErrInvalidServerKey, "key %q must be rejected", bad)
 	}
 }
 

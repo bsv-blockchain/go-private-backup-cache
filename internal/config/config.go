@@ -20,6 +20,14 @@ import (
 // through a bounded chunk buffer into storage (see internal/authproof and blobstore).
 const DefaultMaxBlobBytes int64 = 200 << 20
 
+var (
+	// ErrMissingServerKey means SERVER_PRIVATE_KEY is unset or empty.
+	ErrMissingServerKey = errors.New("SERVER_PRIVATE_KEY is not defined in environment variables")
+
+	// ErrInvalidServerKey means SERVER_PRIVATE_KEY is not 64 hexadecimal characters.
+	ErrInvalidServerKey = errors.New("SERVER_PRIVATE_KEY is invalid")
+)
+
 // Config is the fully resolved service configuration.
 type Config struct {
 	Port             int
@@ -39,7 +47,7 @@ type Config struct {
 func Load() (*Config, error) {
 	key := os.Getenv("SERVER_PRIVATE_KEY")
 	if key == "" {
-		return nil, errors.New("SERVER_PRIVATE_KEY is not defined in environment variables")
+		return nil, ErrMissingServerKey
 	}
 	if err := validateHexKey(key); err != nil {
 		return nil, err
@@ -60,12 +68,12 @@ func Load() (*Config, error) {
 
 func validateHexKey(key string) error {
 	if len(key) != 64 {
-		return fmt.Errorf("SERVER_PRIVATE_KEY must be 64 hex characters, got %d", len(key))
+		return fmt.Errorf("%w: must be 64 hex characters, got %d", ErrInvalidServerKey, len(key))
 	}
 	for _, c := range key {
 		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 		if !isHex {
-			return errors.New("SERVER_PRIVATE_KEY must be hexadecimal")
+			return fmt.Errorf("%w: must be hexadecimal", ErrInvalidServerKey)
 		}
 	}
 	return nil

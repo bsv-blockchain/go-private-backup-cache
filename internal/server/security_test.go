@@ -88,7 +88,7 @@ func TestNoReadRouteLeaksAcrossIdentities(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			routerAs(store, bob).ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+			routerAs(store, bob).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
 
 			require.NotContains(t, rec.Body.String(), "alice-secret",
 				"%s leaked another identity's ciphertext", tc.name)
@@ -106,11 +106,11 @@ func TestBlobForAnotherIdentityIsIndistinguishableFromMissing(t *testing.T) {
 
 	existing := httptest.NewRecorder()
 	routerAs(store, bob).ServeHTTP(existing,
-		httptest.NewRequest(http.MethodGet, "/v1/log/"+secDevice+"/1?generation=1", nil))
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/log/"+secDevice+"/1?generation=1", nil))
 
 	absent := httptest.NewRecorder()
 	routerAs(store, bob).ServeHTTP(absent,
-		httptest.NewRequest(http.MethodGet, "/v1/log/"+secDevice+"/9?generation=1", nil))
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/log/"+secDevice+"/9?generation=1", nil))
 
 	// Identical responses, so the API cannot be used to probe for another user's blobs.
 	require.Equal(t, http.StatusNotFound, existing.Code)
@@ -126,7 +126,7 @@ func TestAppendCannotWriteIntoAnotherIdentitysLog(t *testing.T) {
 
 	// Same device and generation as Alice. Bob's write must land in Bob's own log, and
 	// must not disturb Alice's entry at the same coordinates.
-	req := httptest.NewRequest(http.MethodPost,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 		"/v1/log/"+secDevice+"?seq=1&generation=1", bytes.NewReader([]byte("bob-wrote-this")))
 	req.Header.Set("Content-Type", handlers.ContentTypeOctetStream)
 	rec := httptest.NewRecorder()
@@ -160,7 +160,7 @@ func TestPruneCannotDeleteAnotherIdentitysData(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	routerAs(store, bob).ServeHTTP(rec,
-		httptest.NewRequest(http.MethodDelete, "/v1/generation/"+secDevice+"/1", nil))
+		httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/v1/generation/"+secDevice+"/1", nil))
 	require.Equal(t, http.StatusNotFound, rec.Code)
 
 	// Alice's data survives untouched.
@@ -180,7 +180,7 @@ func TestEraseCannotTouchAnotherIdentitysData(t *testing.T) {
 	seedAlice(t, store, alice)
 
 	rec := httptest.NewRecorder()
-	routerAs(store, bob).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/account", nil))
+	routerAs(store, bob).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/v1/account", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"deleted":0`, "bob's erasure found bob's data, which is none")
 
@@ -203,7 +203,7 @@ func TestManifestOnlyEverListsTheCallersOwnDevices(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	routerAs(store, bob).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/manifest", nil))
+	routerAs(store, bob).ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/manifest", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "ffffffffffffffffffffffffffffffff")

@@ -51,7 +51,7 @@ func TestOversizeUploadReports413NotAuthFailure(t *testing.T) {
 	// header — and sent with no proof at all: the size answer must still win over the
 	// auth answer.
 	body := bytes.Repeat([]byte("x"), int(maxBlobBytes+1))
-	req := httptest.NewRequest(http.MethodPost, "/v1/log/"+secDevice+"?seq=1&generation=1", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/log/"+secDevice+"?seq=1&generation=1", bytes.NewReader(body))
 	req.Header.Set("Content-Type", handlers.ContentTypeOctetStream)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -67,7 +67,7 @@ func TestUnderCapUploadStillReachesAuth(t *testing.T) {
 	const maxBlobBytes = 4096
 	r := testRouter(t, maxBlobBytes)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/log/"+secDevice+"?seq=1&generation=1",
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/log/"+secDevice+"?seq=1&generation=1",
 		bytes.NewReader(bytes.Repeat([]byte("x"), 1024)))
 	req.Header.Set("Content-Type", handlers.ContentTypeOctetStream)
 	rec := httptest.NewRecorder()
@@ -85,7 +85,7 @@ func TestLimitsEndpointIsPublicAndReportsTheCap(t *testing.T) {
 	r := testRouter(t, maxBlobBytes)
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/limits", nil))
+	r.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/limits", nil))
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var got struct {

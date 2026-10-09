@@ -36,7 +36,7 @@ func TestGuardOverridesDownstreamAnswerOnOverflow(t *testing.T) {
 	h := maxBody(blobLimit)(readAllThenClaimAuthFailure(t))
 
 	body := bytes.Repeat([]byte("x"), int(blobLimit+1))
-	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/log/dev", bytes.NewReader(body))
 	// No declared length: the guard has to count rather than read the header.
 	req.ContentLength = -1
 	rec := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestGuardLeavesUnderCapRequestsAlone(t *testing.T) {
 	const blobLimit int64 = 4096
 	h := maxBody(blobLimit)(readAllThenClaimAuthFailure(t))
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev",
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/log/dev",
 		bytes.NewReader(bytes.Repeat([]byte("x"), int(blobLimit))))
 	req.ContentLength = -1
 	rec := httptest.NewRecorder()
@@ -70,7 +70,7 @@ func TestGuardRejectsOnDeclaredLengthWithoutReading(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/log/dev", bytes.NewReader([]byte("x")))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/log/dev", bytes.NewReader([]byte("x")))
 	req.ContentLength = blobLimit + 1
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

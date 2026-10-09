@@ -35,6 +35,10 @@ import (
 // contentTypeOctetStream is the only upload encoding the service accepts.
 const contentTypeOctetStream = "application/octet-stream"
 
+// ErrNoServerIdentityKey means GET /v1/limits answered without the server's identity key,
+// without which no request can be signed.
+var ErrNoServerIdentityKey = errors.New("limits response carries no serverIdentityKey")
+
 // Limits is the service's published operating envelope, from GET /v1/limits.
 type Limits struct {
 	MaxBlobBytes      int64  `json:"maxBlobBytes"`
@@ -83,7 +87,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("backup cache: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
-// Option customises a Client.
+// Option customizes a Client.
 type Option func(*Client)
 
 // WithHTTPClient substitutes the transport, e.g. to set timeouts or a proxy. Uploads and
@@ -155,7 +159,7 @@ func (c *Client) Limits(ctx context.Context) (Limits, error) {
 		return Limits{}, fmt.Errorf("decode limits: %w", err)
 	}
 	if lim.ServerIdentityKey == "" {
-		return Limits{}, errors.New("limits response carries no serverIdentityKey")
+		return Limits{}, ErrNoServerIdentityKey
 	}
 	c.limits = &lim
 	return lim, nil
@@ -237,7 +241,7 @@ func (c *Client) Index(ctx context.Context, deviceID string, generation, from, l
 	return out.Entries, nil
 }
 
-// Manifest summarises every device and generation this identity has stored. This is the
+// Manifest summarizes every device and generation this identity has stored. This is the
 // restore entry point: a fresh install derives its key from the recovered seed, calls
 // this, and picks a device and generation to replay.
 func (c *Client) Manifest(ctx context.Context) ([]DeviceSummary, error) {
@@ -265,7 +269,7 @@ func (c *Client) PruneGeneration(ctx context.Context, deviceID string, generatio
 	if err != nil {
 		return err
 	}
-	closeQuietly(resp.Body)
+	defer closeQuietly(resp.Body)
 	return nil
 }
 

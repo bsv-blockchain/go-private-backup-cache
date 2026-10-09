@@ -45,7 +45,7 @@ func stores(t *testing.T) map[string]blobstore.BlobStore {
 	out := map[string]blobstore.BlobStore{"memory": blobstore.NewMemoryStore()}
 
 	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
-		pg, err := blobstore.NewPostgresStore(dsn)
+		pg, err := blobstore.NewPostgresStore(t.Context(), dsn)
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, pg.Close()) })
 		out["postgres"] = pg
@@ -72,6 +72,9 @@ func mustGet(t *testing.T, s blobstore.BlobStore, k blobstore.BlobKey) ([]byte, 
 	return data, size
 }
 
+// errConnectionLost is what failingReader reports once its bytes run out.
+var errConnectionLost = errors.New("connection lost")
+
 // failingReader stands in for an upload whose connection drops after some bytes arrived:
 // it yields n bytes and then errors instead of reaching EOF.
 type failingReader struct {
@@ -80,7 +83,7 @@ type failingReader struct {
 
 func (r *failingReader) Read(p []byte) (int, error) {
 	if r.remaining == 0 {
-		return 0, errors.New("connection lost")
+		return 0, errConnectionLost
 	}
 	n := min(len(p), r.remaining)
 	for i := range n {
@@ -321,7 +324,7 @@ func TestDeleteAccountIsScopedToPseudonym(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(1), n)
 
-		// The neighbouring account is untouched. Erasure is the most destructive operation
+		// The neighboring account is untouched. Erasure is the most destructive operation
 		// in the service, so its scoping matters more than any other method's.
 		got, _ := mustGet(t, s, blobstore.BlobKey{
 			Pseudonym: theirs, DeviceID: device, Generation: 1, Seq: 1,

@@ -29,7 +29,7 @@ func pgNonceStore(t *testing.T) (*nonce.PostgresStore, *sql.DB) {
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	s, err := nonce.NewPostgresStore(db)
+	s, err := nonce.NewPostgresStore(t.Context(), db)
 	require.NoError(t, err)
 	return s, db
 }
@@ -138,11 +138,13 @@ func TestPostgresConsumeReportsAStoreFailureAsAnError(t *testing.T) {
 	_, err = rand.Read(nameBytes)
 	require.NoError(t, err)
 	name := "nonce_" + hex.EncodeToString(nameBytes)
-	_, err = admin.Exec("CREATE DATABASE " + pq.QuoteIdentifier(name))
+	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+pq.QuoteIdentifier(name))
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, err := admin.Exec("DROP DATABASE " + pq.QuoteIdentifier(name) + " WITH (FORCE)")
-		require.NoError(t, err)
+		// context.Background, not t.Context: the test context is canceled before cleanup runs.
+		_, dropErr := admin.ExecContext(context.Background(),
+			"DROP DATABASE "+pq.QuoteIdentifier(name)+" WITH (FORCE)")
+		require.NoError(t, dropErr)
 		require.NoError(t, admin.Close())
 	})
 
@@ -153,9 +155,9 @@ func TestPostgresConsumeReportsAStoreFailureAsAnError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-	s, err := nonce.NewPostgresStore(db)
+	s, err := nonce.NewPostgresStore(t.Context(), db)
 	require.NoError(t, err)
-	_, err = db.Exec(`DROP TABLE auth_nonces`)
+	_, err = db.ExecContext(t.Context(), `DROP TABLE auth_nonces`)
 	require.NoError(t, err)
 
 	// A broken store must surface as an error, never as ok=false: false means "replay,

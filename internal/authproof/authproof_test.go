@@ -106,11 +106,20 @@ func TestVerifyRefusesTampering(t *testing.T) {
 	now := time.UnixMilli(c.ExpiresAt).Add(-time.Minute)
 
 	tampered := map[string]func(p authproof.Proof) (authproof.Proof, string){
-		"action":    func(p authproof.Proof) (authproof.Proof, string) { p.Action += "x"; return p, p.Action },
-		"expiry":    func(p authproof.Proof) (authproof.Proof, string) { p.ExpiresAt++; return p, p.Action },
-		"nonce":     func(p authproof.Proof) (authproof.Proof, string) { p.Nonce = strings.Repeat("A", 44); return p, p.Action },
-		"identity":  func(p authproof.Proof) (authproof.Proof, string) { p.IdentityKey = v.ServerIdentityKey; return p, p.Action },
-		"signature": func(p authproof.Proof) (authproof.Proof, string) { p.Signature = v.Cases[1].SignatureBase64; return p, p.Action },
+		"action": func(p authproof.Proof) (authproof.Proof, string) { p.Action += "x"; return p, p.Action },
+		"expiry": func(p authproof.Proof) (authproof.Proof, string) { p.ExpiresAt++; return p, p.Action },
+		"nonce": func(p authproof.Proof) (authproof.Proof, string) {
+			p.Nonce = strings.Repeat("A", 44)
+			return p, p.Action
+		},
+		"identity": func(p authproof.Proof) (authproof.Proof, string) {
+			p.IdentityKey = v.ServerIdentityKey
+			return p, p.Action
+		},
+		"signature": func(p authproof.Proof) (authproof.Proof, string) {
+			p.Signature = v.Cases[1].SignatureBase64
+			return p, p.Action
+		},
 	}
 	for name, mutate := range tampered {
 		p, expected := mutate(base)

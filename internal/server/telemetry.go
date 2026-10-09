@@ -110,6 +110,7 @@ func Telemetry(log *slog.Logger) func(http.Handler) http.Handler {
 // statusRecorder captures what the handler answered, for the span, metrics and log line.
 type statusRecorder struct {
 	http.ResponseWriter
+
 	status  int
 	written int64
 }

@@ -131,7 +131,7 @@ func Sign(ctx context.Context, w wallet.Interface, counterpartyKey, action strin
 	}
 
 	nonceBytes := make([]byte, 32)
-	if _, err := rand.Read(nonceBytes); err != nil {
+	if _, err = rand.Read(nonceBytes); err != nil {
 		return Proof{}, fmt.Errorf("draw nonce: %w", err)
 	}
 	p := Proof{

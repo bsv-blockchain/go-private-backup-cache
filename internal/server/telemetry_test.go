@@ -69,17 +69,16 @@ func newTelemetryHarness(t *testing.T) *telemetryHarness {
 	return h
 }
 
-func (h *telemetryHarness) do(method, path string) *httptest.ResponseRecorder {
-	rec := httptest.NewRecorder()
-	h.router.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-	return rec
+func (h *telemetryHarness) get(t *testing.T, path string) {
+	t.Helper()
+	h.router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 }
 
 func TestTelemetrySpanUsesRoutePattern(t *testing.T) {
 	// Span names must use the route pattern, not the raw path: raw paths explode
 	// cardinality and leak device IDs into the telemetry backend.
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/v1/log/abc123")
+	h.get(t, "/v1/log/abc123")
 
 	spans := h.spans.Ended()
 	require.Len(t, spans, 1)
@@ -95,14 +94,14 @@ func TestTelemetrySpanUsesRoutePattern(t *testing.T) {
 func TestTelemetrySkipsHealth(t *testing.T) {
 	// Health probes fire every few seconds; tracing them drowns real traffic.
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/health")
+	h.get(t, "/health")
 	require.Empty(t, h.spans.Ended())
 	require.Empty(t, h.logs.String())
 }
 
 func TestTelemetryRecordsDurationHistogram(t *testing.T) {
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/v1/log/abc123")
+	h.get(t, "/v1/log/abc123")
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, h.reader.Collect(context.Background(), &rm))
@@ -118,7 +117,7 @@ func TestTelemetryRecordsDurationHistogram(t *testing.T) {
 
 func TestTelemetryEmitsRequestSummaryLog(t *testing.T) {
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/v1/log/abc123")
+	h.get(t, "/v1/log/abc123")
 
 	var line map[string]any
 	require.NoError(t, json.Unmarshal(h.logs.Bytes(), &line), "log output: %s", h.logs.String())
@@ -135,7 +134,7 @@ func TestTelemetryLogsServerErrorsAtWarn(t *testing.T) {
 	// A 5xx is the "something is going wrong" signal; it must stand out from routine
 	// traffic at the log level, not just in the status field.
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/boom")
+	h.get(t, "/boom")
 
 	var line map[string]any
 	require.NoError(t, json.Unmarshal(h.logs.Bytes(), &line))
@@ -145,8 +144,8 @@ func TestTelemetryLogsServerErrorsAtWarn(t *testing.T) {
 
 func TestTelemetryCountsServerErrors(t *testing.T) {
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/boom")
-	h.do(http.MethodGet, "/v1/log/abc123")
+	h.get(t, "/boom")
+	h.get(t, "/v1/log/abc123")
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, h.reader.Collect(context.Background(), &rm))
@@ -164,7 +163,7 @@ func TestTelemetryLabelsUnmatchedRoutes(t *testing.T) {
 	// unmatched traffic invisible in metrics, so it gets a fixed name. All such requests
 	// share one label on purpose — per-path labels would let scanners mint metric series.
 	h := newTelemetryHarness(t)
-	h.do(http.MethodGet, "/no/such/route")
+	h.get(t, "/no/such/route")
 
 	var line map[string]any
 	require.NoError(t, json.Unmarshal(h.logs.Bytes(), &line))
@@ -195,7 +194,7 @@ func TestRouterWiresTelemetry(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/limits", nil))
+	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/limits", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	spans := h.spans.Ended()

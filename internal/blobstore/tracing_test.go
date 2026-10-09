@@ -48,7 +48,7 @@ func TestWithTracingSpansAppend(t *testing.T) {
 	require.True(t, ok)
 	require.EqualValues(t, len("payload"), size.AsInt64())
 	for _, kv := range spans[0].Attributes() {
-		require.NotContains(t, kv.Value.Emit(), "pseud")
+		require.NotContains(t, kv.Value.String(), "pseud")
 	}
 }
 

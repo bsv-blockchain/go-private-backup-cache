@@ -142,7 +142,8 @@ func (m *MemoryStore) Manifest(_ context.Context, pseudonym string) ([]DeviceSum
 		}
 	}
 
-	out := []DeviceSummary{}
+	// Non-nil even when empty, so the manifest serializes as [] rather than null.
+	out := make([]DeviceSummary, 0, len(byDevGen))
 	for _, a := range byDevGen {
 		out = append(out, DeviceSummary{
 			DeviceID:   a.head.key.DeviceID,
@@ -208,7 +209,7 @@ func (m *MemoryStore) DeleteAccount(_ context.Context, pseudonym string) (int64,
 }
 
 // Ping implements BlobStore.
-func (m *MemoryStore) Ping() error { return nil }
+func (m *MemoryStore) Ping(context.Context) error { return nil }
 
 func (m *MemoryStore) headSeqLocked(pseudonym, deviceID string, generation int) int {
 	head := 0

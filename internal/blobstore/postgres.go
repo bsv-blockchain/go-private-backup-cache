@@ -63,8 +63,9 @@ type PostgresStore struct {
 	db *sql.DB
 }
 
-// NewPostgresStore opens the database and runs migrations.
-func NewPostgresStore(dsn string) (*PostgresStore, error) {
+// NewPostgresStore opens the database and runs migrations. ctx bounds the initial ping
+// and the migrations, not the lifetime of the returned store.
+func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -73,11 +74,11 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
-	if err := db.Ping(); err != nil {
+	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 	for i, m := range Migrations {
-		if _, err := db.Exec(m); err != nil {
+		if _, err = db.ExecContext(ctx, m); err != nil {
 			return nil, fmt.Errorf("migration %d: %w", i, err)
 		}
 	}
@@ -85,7 +86,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 }
 
 // Ping implements BlobStore.
-func (s *PostgresStore) Ping() error { return s.db.Ping() }
+func (s *PostgresStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 // Close releases the pool.
 func (s *PostgresStore) Close() error { return s.db.Close() }
@@ -136,7 +137,7 @@ func (s *PostgresStore) Append(ctx context.Context, k BlobKey, prev string, body
 		if n > 0 {
 			hasher.Write(buf[:n])
 			size += int64(n)
-			if _, err := tx.ExecContext(ctx,
+			if _, err = tx.ExecContext(ctx,
 				`INSERT INTO blob_chunks (pseudonym, device_id, generation, seq, idx, chunk)
 				 VALUES ($1,$2,$3,$4,$5,$6)`,
 				k.Pseudonym, k.DeviceID, k.Generation, k.Seq, idx, buf[:n]); err != nil {
@@ -215,7 +216,7 @@ func (s *PostgresStore) Get(ctx context.Context, k BlobKey) (io.ReadCloser, int6
 		return nil, 0, err
 	}
 
-	rows, err := tx.QueryContext(ctx,
+	rows, err := tx.QueryContext(ctx, //nolint:rowserrcheck // rows.Err is checked in chunkReader.Read
 		`SELECT chunk FROM blob_chunks
 		 WHERE pseudonym=$1 AND device_id=$2 AND generation=$3 AND seq=$4
 		 ORDER BY idx ASC`,
@@ -357,7 +358,7 @@ func (s *PostgresStore) DeleteGeneration(ctx context.Context, pseudonym, deviceI
 		}
 	}()
 
-	if _, err := tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`DELETE FROM blob_chunks WHERE pseudonym=$1 AND device_id=$2 AND generation=$3`,
 		pseudonym, deviceID, generation); err != nil {
 		return 0, err
@@ -391,7 +392,7 @@ func (s *PostgresStore) DeleteAccount(ctx context.Context, pseudonym string) (in
 		}
 	}()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_chunks WHERE pseudonym=$1`, pseudonym); err != nil {
+	if _, err = tx.ExecContext(ctx, `DELETE FROM blob_chunks WHERE pseudonym=$1`, pseudonym); err != nil {
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM blob_log WHERE pseudonym=$1`, pseudonym)

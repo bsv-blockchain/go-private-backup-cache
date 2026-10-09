@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"io"
 	"net/url"
 	"os"
@@ -20,7 +19,7 @@ import (
 	"github.com/bsv-blockchain/go-private-backup-cache/internal/blobstore"
 )
 
-// pgStore gates a test on a real database, mirroring stores(): the behaviours below —
+// pgStore gates a test on a real database, mirroring stores(): the behaviors below —
 // transaction races, physical chunk rows, boot migrations — only exist in postgres, so
 // there is no memory-store variant to fall back to.
 func pgStore(t *testing.T) *blobstore.PostgresStore {
@@ -29,7 +28,7 @@ func pgStore(t *testing.T) *blobstore.PostgresStore {
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set; this test needs a real postgres")
 	}
-	pg, err := blobstore.NewPostgresStore(dsn)
+	pg, err := blobstore.NewPostgresStore(t.Context(), dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, pg.Close()) })
 	return pg
@@ -79,16 +78,16 @@ func TestConcurrentAppendsToOneSequenceHaveExactlyOneWinner(t *testing.T) {
 	// The READ COMMITTED head check waves every racer through; the primary key must stop
 	// all but one, and each loser must hear the protocol answer (ErrSeqConflict) a stale
 	// client gets — never a raw driver error, which the handler would surface as a 500.
-	winner := -1
+	winner, winnerSha := -1, ""
 	for i, err := range errs {
 		if err == nil {
 			require.Equal(t, -1, winner, "appends %d and %d both claimed the sequence", winner, i)
-			winner = i
+			winner, winnerSha = i, shas[i]
 			continue
 		}
 		require.ErrorIs(t, err, blobstore.ErrSeqConflict, "loser %d", i)
 		var pqErr *pq.Error
-		require.False(t, errors.As(err, &pqErr), "loser %d leaked a raw pq error: %v", i, err)
+		require.NotErrorAs(t, err, &pqErr, "loser %d leaked a raw pq error: %v", i, err)
 	}
 	require.NotEqual(t, -1, winner, "no append won the race")
 
@@ -97,7 +96,7 @@ func TestConcurrentAppendsToOneSequenceHaveExactlyOneWinner(t *testing.T) {
 	got, size := mustGet(t, pg, k)
 	require.Equal(t, int64(bodyBytes), size)
 	sum := sha256.Sum256(got)
-	require.Equal(t, shas[winner], hex.EncodeToString(sum[:]))
+	require.Equal(t, winnerSha, hex.EncodeToString(sum[:]))
 }
 
 func TestMultiChunkBlobsRoundTripByteExactly(t *testing.T) {
@@ -204,12 +203,14 @@ func TestBootMigratesAPreStreamingDatabase(t *testing.T) {
 	_, err = rand.Read(nameBytes)
 	require.NoError(t, err)
 	name := "migration_" + hex.EncodeToString(nameBytes)
-	_, err = admin.Exec("CREATE DATABASE " + pq.QuoteIdentifier(name))
+	_, err = admin.ExecContext(t.Context(), "CREATE DATABASE "+pq.QuoteIdentifier(name))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		// FORCE, so a lingering pool connection cannot strand the throwaway database.
-		_, err := admin.Exec("DROP DATABASE " + pq.QuoteIdentifier(name) + " WITH (FORCE)")
-		require.NoError(t, err)
+		// context.Background, not t.Context: the test context is canceled before cleanup runs.
+		_, dropErr := admin.ExecContext(context.Background(),
+			"DROP DATABASE "+pq.QuoteIdentifier(name)+" WITH (FORCE)")
+		require.NoError(t, dropErr)
 		require.NoError(t, admin.Close())
 	})
 
@@ -223,10 +224,10 @@ func TestBootMigratesAPreStreamingDatabase(t *testing.T) {
 	seed, err := sql.Open("postgres", target)
 	require.NoError(t, err)
 	for _, m := range preStreamingMigrations {
-		_, err := seed.Exec(m)
+		_, err = seed.ExecContext(t.Context(), m)
 		require.NoError(t, err)
 	}
-	_, err = seed.Exec(
+	_, err = seed.ExecContext(t.Context(),
 		`INSERT INTO blob_log (pseudonym, device_id, generation, seq, sha256, ciphertext)
 		 VALUES ('02aa', 'd1', 1, 1, 'feed', '\x6f6c64'::bytea)`)
 	require.NoError(t, err)
@@ -234,18 +235,18 @@ func TestBootMigratesAPreStreamingDatabase(t *testing.T) {
 
 	// Boot against the old schema. Destructive on purpose, per the standing
 	// no-compatibility decision: success means the old table is gone, not converted.
-	pg, err := blobstore.NewPostgresStore(target)
+	pg, err := blobstore.NewPostgresStore(t.Context(), target)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, pg.Close()) })
 
 	var ciphertextCols int
-	require.NoError(t, pg.DB().QueryRow(
+	require.NoError(t, pg.DB().QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM information_schema.columns
 		  WHERE table_name = 'blob_log' AND column_name = 'ciphertext'`).Scan(&ciphertextCols))
 	require.Zero(t, ciphertextCols, "the pre-streaming ciphertext column survived the migration")
 
 	var chunkTables int
-	require.NoError(t, pg.DB().QueryRow(
+	require.NoError(t, pg.DB().QueryRowContext(t.Context(),
 		`SELECT COUNT(*) FROM information_schema.tables
 		  WHERE table_name = 'blob_chunks'`).Scan(&chunkTables))
 	require.Equal(t, 1, chunkTables, "blob_chunks missing after the migration")
