@@ -15,7 +15,7 @@ ever sees ciphertext and a pseudonymous identity key; encrypt before you append.
 npm install @bsv/backup-cache-client @bsv/sdk
 ```
 
-`@bsv/sdk` (>= 2.4.1) is a peer dependency — the wallet you pass in comes from it.
+`@bsv/sdk` (^3.0.0) is a peer dependency — the wallet you pass in comes from it.
 
 ## Usage
 

@@ -14,6 +14,8 @@ contrib/
 docs/
 test-client/
 ts-client/
+package.json
+package-lock.json
 *.md
 
 ##
