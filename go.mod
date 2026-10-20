@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/bsv-blockchain/go-sdk v1.7.2
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/joho/godotenv v1.6.0-pre.4
 	github.com/lib/pq v1.12.3
 	github.com/stretchr/testify v1.12.1
