@@ -19,6 +19,9 @@
 #   • Force‑push and delete‑branch disabled via branch‑protection rules.
 #   • PR limit = 10 to avoid queue flooding.
 #   • All dependency PRs require passing CI checks before merging.
+#   • Cooldown on version updates – a new release waits 3 days (patch 3 / minor 7 /
+#     major 14 where the ecosystem supports semver cooldowns) before a PR opens;
+#     first-party and trusted publishers are exempt, security updates are never delayed.
 # ────────────────────────────────────────────────────────────────
 
 version: 2
@@ -48,6 +51,12 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+      exclude: ["github.com/bsv-blockchain/*"]
 
   # ──────────────────────────────────────────────────────────────
   # 2. GitHub Actions Workflows
@@ -71,6 +80,9 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
+      exclude: ["actions/*", "github/*", "gitleaks/*", "ossf/*"]
 
   # ──────────────────────────────────────────────────────────────
   # 3. DevContainer (devcontainer.json : base image + features)
@@ -94,6 +106,9 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
+      exclude: ["ghcr.io/devcontainers/features/*"]
 
   # ──────────────────────────────────────────────────────────────
   # 4. npm (TypeScript client + cross-language interop suite)
@@ -131,6 +146,11 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
 
   # ──────────────────────────────────────────────────────────────
   # 5. Docker (Dockerfile base images)
@@ -152,3 +172,6 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
+      exclude: ["golang"]
