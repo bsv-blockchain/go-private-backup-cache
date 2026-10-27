@@ -28,7 +28,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "@bsv/auth": "^0.1.6"
+    "@bsv/auth": "^0.1.7"
   },
   "peerDependencies": {
     "@bsv/sdk": "^3.0.0"
