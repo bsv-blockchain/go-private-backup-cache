@@ -9,6 +9,6 @@
   "dependencies": {
     "@bsv/auth": "^0.1.8",
     "@bsv/backup-cache-client": "*",
-    "@bsv/sdk": "^3.2.1"
+    "@bsv/sdk": "^4.0.0"
   }
 }
