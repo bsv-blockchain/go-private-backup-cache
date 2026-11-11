@@ -18,13 +18,14 @@
     }
   },
   "files": [
+    "PATENTS",
     "NOTICE",
     "dist",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "prepack": "node -e \"const fs=require('fs');for(const f of ['NOTICE'])fs.copyFileSync('../'+f,f)\"",
+    "prepack": "node -e \"const fs=require('fs');for(const f of ['NOTICE','PATENTS'])fs.copyFileSync('../'+f,f)\"",
     "build": "tsc",
     "test": "npm run build && node --test test/*.test.mjs",
     "prepublishOnly": "npm run build && npm test"

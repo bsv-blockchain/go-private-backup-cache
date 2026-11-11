@@ -56,3 +56,4 @@ node_modules/
 
 # LICENSE / NOTICE copied into nested npm packages by their prepack script
 /ts-client/NOTICE
+/ts-client/PATENTS
