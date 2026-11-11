@@ -53,3 +53,6 @@ node_modules/
 
 # Server binary (go build ./cmd/server)
 /server
+
+# LICENSE / NOTICE copied into nested npm packages by their prepack script
+/ts-client/NOTICE
