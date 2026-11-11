@@ -36,7 +36,7 @@
     "@bsv/sdk": "^3.0.0"
   },
   "devDependencies": {
-    "@bsv/sdk": "^3.2.1",
+    "@bsv/sdk": "^4.0.0",
     "typescript": "^7.0.2"
   }
 }
