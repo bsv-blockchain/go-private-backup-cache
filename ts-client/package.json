@@ -2,7 +2,7 @@
   "name": "@bsv/backup-cache-client",
   "version": "0.1.0",
   "description": "TypeScript client for the go-private-backup-cache service: stateless per-request auth proofs over streaming encrypted blobs.",
-  "license": "Open BSV License",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bsv-blockchain/go-private-backup-cache.git",
@@ -18,11 +18,13 @@
     }
   },
   "files": [
+    "NOTICE",
     "dist",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "prepack": "node -e \"const fs=require('fs');for(const f of ['NOTICE'])fs.copyFileSync('../'+f,f)\"",
     "build": "tsc",
     "test": "npm run build && node --test test/*.test.mjs",
     "prepublishOnly": "npm run build && npm test"
