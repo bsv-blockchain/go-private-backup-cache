@@ -3,7 +3,7 @@ module github.com/bsv-blockchain/go-private-backup-cache
 go 1.26.0
 
 require (
-	github.com/bsv-blockchain/go-sdk v1.7.4
+	github.com/bsv-blockchain/go-sdk v1.7.5
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/joho/godotenv v1.6.0-pre.4
 	github.com/lib/pq v1.12.3

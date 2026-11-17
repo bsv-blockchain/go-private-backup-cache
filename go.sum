@@ -1,5 +1,5 @@
-github.com/bsv-blockchain/go-sdk v1.7.4 h1:FqeReOBYNOgUBF4/qTQqqpOrSjD8sRhTu2RIT/G8ZMc=
-github.com/bsv-blockchain/go-sdk v1.7.4/go.mod h1:JrqAZhpbJmob3+ouaXGCQPU08OBwWLxOV9rurOaVZs4=
+github.com/bsv-blockchain/go-sdk v1.7.5 h1:QLClmnX5m7/AUJpoSVkq7cKEInFTty3qnRZDc59ji3Q=
+github.com/bsv-blockchain/go-sdk v1.7.5/go.mod h1:+soad7WHBrvMGTpznMGJeOcQxZ3rWtLzWmcfhOSfPag=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
