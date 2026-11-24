@@ -7,8 +7,8 @@
     "test": "node interop.mjs"
   },
   "dependencies": {
-    "@bsv/auth": "^0.1.8",
+    "@bsv/auth": "^0.1.9",
     "@bsv/backup-cache-client": "*",
-    "@bsv/sdk": "^4.0.1"
+    "@bsv/sdk": "^4.1.1"
   }
 }
