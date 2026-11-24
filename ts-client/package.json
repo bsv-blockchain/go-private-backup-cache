@@ -31,13 +31,13 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "@bsv/auth": "^0.1.8"
+    "@bsv/auth": "^0.1.9"
   },
   "peerDependencies": {
     "@bsv/sdk": "^3.0.0"
   },
   "devDependencies": {
-    "@bsv/sdk": "^4.0.1",
+    "@bsv/sdk": "^4.1.1",
     "typescript": "^7.0.2"
   }
 }
